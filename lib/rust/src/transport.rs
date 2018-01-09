@@ -13,12 +13,9 @@ use mime;
 use thrift::transport::{TBufferedReadTransportFactory, TBufferedWriteTransportFactory,
                         TReadTransport, TReadTransportFactory, TWriteTransport,
                         TWriteTransportFactory};
-use thrift::protocol::{TInputProtocolFactory, TOutputProtocolFactory};
-use thrift::server::TProcessor;
 
-// TODO: Figure out what we need for FProcessor and kin
-//use processor::FProcessor;
-//use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
+use processor::FProcessor;
+use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
 
 // TODO: could this be an RC and RefCell?
 struct MutexWriteTransport(Arc<Mutex<Vec<u8>>>);
@@ -47,16 +44,16 @@ pub trait FReadTransport: TReadTransport {}
 pub trait FWriteTransport: TWriteTransport {}
 
 pub struct FHTTPService {
-    processor: Arc<TProcessor>,
-    input_protocol_factory: Arc<TInputProtocolFactory>,
-    output_protocol_factory: Arc<TOutputProtocolFactory>,
+    processor: Arc<FProcessor>,
+    input_protocol_factory: Arc<FInputProtocolFactory>,
+    output_protocol_factory: Arc<FOutputProtocolFactory>,
 }
 
 impl FHTTPService {
     pub fn new(
-        processor: Arc<TProcessor>,
-        input_protocol_factory: Arc<TInputProtocolFactory>,
-        output_protocol_factory: Arc<TOutputProtocolFactory>,
+        processor: Arc<FProcessor>,
+        input_protocol_factory: Arc<FInputProtocolFactory>,
+        output_protocol_factory: Arc<FOutputProtocolFactory>,
     ) -> Self {
         FHTTPService {
             processor,
@@ -126,16 +123,16 @@ impl Service for FHTTPService {
             let mut cursor = Cursor::new(decoded);
             cursor.set_position(4);
             let input = read_fac.create(Box::new(cursor));
-            let mut iprot = input_protocol_factory.create(input);
+            let mut iprot = input_protocol_factory.get_protocol(input);
 
             // get output transport and protocol
             let write_fac = TBufferedWriteTransportFactory::new();
             let out_buf = Arc::new(Mutex::new(Vec::new()));
             let output = write_fac.create(Box::new(MutexWriteTransport(Arc::clone(&out_buf))));
-            let mut oprot = output_protocol_factory.create(output);
+            let mut oprot = output_protocol_factory.get_protocol(output);
 
             // run processor
-            if let Err(err) = processor.process(&mut *iprot, &mut *oprot) {
+            if let Err(err) = processor.process(&mut iprot, &mut oprot) {
                 return Box::new(future::ok(error_resp(format!(
                     "Error processing request: {}",
                     err.description()
@@ -174,5 +171,38 @@ impl Service for FHTTPService {
                     .with_body(encoded),
             ))
         }))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use thrift;
+
+    use super::*;
+    use protocol::{FInputProtocol, FOutputProtocol};
+
+    struct MockProcessor;
+
+    impl FProcessor for MockProcessor {
+        fn process(
+            &self,
+            iprot: &mut FInputProtocol,
+            oprot: &mut FOutputProtocol,
+        ) -> thrift::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_bad_content_length() {
+        //let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
+        //    thrift::protocol::TCompactInputProtocolFactory::new(),
+        //)));
+        //let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
+        //    thrift::protocol::TCompactOutputProtocolFactory::new(),
+        //)));
+
+        //// TODO: Should we mock this out?
+        //let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
     }
 }

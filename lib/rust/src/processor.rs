@@ -1,3 +1,11 @@
-use thrift::server::TProcessor;
+use thrift;
 
-pub trait FProcessor: TProcessor {}
+use protocol::{FInputProtocol, FOutputProtocol};
+
+pub trait FProcessor {
+    fn process(
+        &self,
+        input: &mut FInputProtocol,
+        output: &mut FOutputProtocol,
+    ) -> thrift::Result<()>;
+}

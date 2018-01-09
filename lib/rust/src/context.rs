@@ -5,13 +5,13 @@ use chrono::Duration;
 use uuid::Uuid;
 
 // Header containing correlation id
-static CID_HEADER: &'static str = "_cid";
+pub static CID_HEADER: &'static str = "_cid";
 
 // Header containing op id (uint64 as string)
-static OP_ID_HEADER: &'static str = "_opid";
+pub static OP_ID_HEADER: &'static str = "_opid";
 
 // Header containing request timeout (milliseconds as string)
-static TIMEOUT_HEADER: &'static str = "_timeout";
+pub static TIMEOUT_HEADER: &'static str = "_timeout";
 
 lazy_static! {
     // Default request timeout
@@ -55,6 +55,7 @@ pub trait FContext: Clone {
     fn timeout(&self) -> Duration;
 }
 
+#[derive(Debug)]
 pub struct FContextImpl {
     request_headers: BTreeMap<String, String>,
     response_headers: BTreeMap<String, String>,
@@ -142,6 +143,7 @@ impl FContext for FContextImpl {
     }
 }
 
+#[cfg(test)]
 mod test {
     use super::*;
 
