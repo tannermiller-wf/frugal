@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::io;
+use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use thrift;
 use thrift::protocol::{TInputProtocol, TInputProtocolFactory, TOutputProtocol,
                        TOutputProtocolFactory};
@@ -139,6 +139,36 @@ impl ProtocolMarshaler {
             }
         }
     }
+
+    fn marshal_headers(&self, headers: &BTreeMap<String, String>) -> thrift::Result<Vec<u8>> {
+        match *self {
+            ProtocolMarshaler::V0 => {
+                let size = headers
+                    .iter()
+                    .fold(0, |size, (k, v)| size + 8 + k.len() + v.len());
+
+                // Header buff = [version (1 byte), size (4 bytes), headers (size bytes)]
+                // Headers = [size (4 bytes) name (size bytes) size (4 bytes) value (size bytes)*]
+                let mut buf = Vec::with_capacity(size + 5);
+
+                // Write version
+                buf.push(PROTOCOL_V0);
+
+                // Write size
+                buf.write_u32::<BigEndian>(size as u32)?;
+
+                // Write headers
+                for (k, v) in headers.iter() {
+                    buf.write_u32::<BigEndian>(k.len() as u32)?;
+                    buf.write(k.as_bytes())?;
+                    buf.write_u32::<BigEndian>(v.len() as u32)?;
+                    buf.write(v.as_bytes())?;
+                }
+
+                Ok(buf)
+            }
+        }
+    }
 }
 
 pub struct FInputProtocol {
@@ -219,8 +249,40 @@ pub struct FOutputProtocol {
 }
 
 impl FOutputProtocol {
-    pub fn write_request_header(ctx: &FContextImpl) -> thrift::Result<()> {
-        unimplemented!()
+    fn write_header(&mut self, header: &BTreeMap<String, String>) -> thrift::Result<()> {
+        ProtocolMarshaler::V0
+            .marshal_headers(header)
+            .and_then(|buf| {
+                self.transport
+                    .write(&buf)
+                    .map_err(|err| {
+                        thrift::new_transport_error(
+                            thrift::TransportErrorKind::Unknown,
+                            format!(
+                                "frugal: error writing protocol headers in writeHeader: {}",
+                                err.description()
+                            ),
+                        )
+                    })
+                    .and_then(|n| {
+                        if n < buf.len() {
+                            Err(thrift::new_transport_error(
+                                thrift::TransportErrorKind::Unknown,
+                                "frugal: failed to write complete protocol headers",
+                            ))
+                        } else {
+                            Ok(())
+                        }
+                    })
+            })
+    }
+
+    pub fn write_request_header(&mut self, ctx: &FContextImpl) -> thrift::Result<()> {
+        self.write_header(ctx.request_headers())
+    }
+
+    pub fn write_response_header(&mut self, ctx: &FContextImpl) -> thrift::Result<()> {
+        self.write_header(ctx.response_headers())
     }
 }
 
@@ -248,13 +310,13 @@ impl FOutputProtocolFactory {
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
+    use std::io::{self, Cursor, Write};
 
     use thrift;
-    use thrift::protocol::TBinaryInputProtocolFactory;
+    use thrift::protocol::{TBinaryInputProtocolFactory, TBinaryOutputProtocolFactory};
 
     use super::*;
-    use context::CID_HEADER;
+    use context::{FContext, FContextImpl, CID_HEADER};
 
     static BASIC_FRAME: &'static [u8] = &[
         0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114
@@ -306,5 +368,119 @@ mod test {
         let mut ctx = FContextImpl::new(None);
         f_input_protocol.read_response_header(&mut ctx).unwrap();
         assert_eq!("bar", ctx.response_headers().get("foo").unwrap());
+    }
+
+    #[test]
+    fn test_output_protocol_write_request_header_errored_writer() {
+        // TODO: find a better mocking story
+        struct MockTransport;
+        impl Write for MockTransport {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Err(io::Error::new(io::ErrorKind::TimedOut, "write failed"))
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output_protocol_factory =
+            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+        let output_transport = Box::new(MockTransport);
+        let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
+        let mut ctx = FContextImpl::new(None);
+        ctx.add_request_header("foo", "bar");
+        let result = f_output_protocol.write_request_header(&ctx);
+        match result {
+            Err(thrift::Error::Transport(te)) => {
+                assert_eq!(thrift::TransportErrorKind::Unknown, te.kind);
+                assert_eq!(
+                    "frugal: error writing protocol headers in writeHeader: write failed",
+                    &te.message
+                );
+            }
+            _ => panic!(
+                "returned not an error, or wrong kind of error: {:?}",
+                &result
+            ),
+        }
+    }
+
+    #[test]
+    fn test_output_protocol_write_request_header_bad_write() {
+        // TODO: find a better mocking story
+        struct MockTransport;
+        impl Write for MockTransport {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(0)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output_protocol_factory =
+            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+        let output_transport = Box::new(MockTransport);
+        let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
+        let mut ctx = FContextImpl::new(None);
+        ctx.add_request_header("foo", "bar");
+        let result = f_output_protocol.write_request_header(&ctx);
+        match result {
+            Err(thrift::Error::Transport(te)) => {
+                assert_eq!(thrift::TransportErrorKind::Unknown, te.kind);
+                assert_eq!(
+                    "frugal: failed to write complete protocol headers",
+                    &te.message
+                );
+            }
+            _ => panic!(
+                "returned not an error, or wrong kind of error: {:?}",
+                &result
+            ),
+        }
+    }
+
+    #[test]
+    fn test_output_protocol_write_request_header_happy_path() {
+        // TODO: find a better mocking story
+        struct MockTransport;
+        impl Write for MockTransport {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                assert_eq!(buf[0], 0); // protocol version
+                assert_eq!(&buf[1..5], &[0u8, 0, 0, (buf.len() - 5) as u8]); // frame size
+                assert_eq!(&buf[5..9], &[0u8, 0, 0, 4]); // _cid key size
+                assert_eq!(&buf[9..13], "_cid".as_bytes()); // _cid key
+                assert_eq!(&buf[13..17], &[0u8, 0, 0, 32]); // _cid value size
+                                                            // skipping _cid value as it's random
+                assert_eq!(&buf[49..53], &[0u8, 0, 0, 5]); // _opid key size
+                assert_eq!(&buf[53..58], "_opid".as_bytes()); // _opid key
+                                                              //assert_eq!(&buf[58..62], &[0u8, 0, 0, 1]); // _opid value size
+                let s = buf[61] as usize; // need to know the _opid size for buf slices below
+                                          // skipping _opid value as it could change
+                assert_eq!(&buf[(62 + s)..(66 + s)], &[0u8, 0, 0, 8]); // _timeout key size
+                assert_eq!(&buf[(66 + s)..(74 + s)], "_timeout".as_bytes()); // _timeout key
+                assert_eq!(&buf[(74 + s)..(78 + s)], &[0u8, 0, 0, 4]); // _timeout value size
+                assert_eq!(&buf[(78 + s)..(82 + s)], &[53u8, 48, 48, 48]); // _timeout value
+                assert_eq!(&buf[(82 + s)..(86 + s)], &[0u8, 0, 0, 3]); // foo key size
+                assert_eq!(&buf[(86 + s)..(89 + s)], "foo".as_bytes()); // foo key
+                assert_eq!(&buf[(89 + s)..(93 + s)], &[0u8, 0, 0, 3]); // foo value size
+                assert_eq!(&buf[(93 + s)..(96 + s)], "bar".as_bytes()); // foo value (bar)
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let output_protocol_factory =
+            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+        let output_transport = Box::new(MockTransport);
+        let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
+        let mut ctx = FContextImpl::new(None);
+        ctx.add_request_header("foo", "bar");
+        f_output_protocol.write_request_header(&ctx).unwrap();
     }
 }
