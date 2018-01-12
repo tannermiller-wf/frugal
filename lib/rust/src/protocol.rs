@@ -310,13 +310,14 @@ impl FOutputProtocolFactory {
 
 #[cfg(test)]
 mod test {
+    use std::fs;
     use std::io::{self, Cursor, Write};
 
     use thrift;
     use thrift::protocol::{TBinaryInputProtocolFactory, TBinaryOutputProtocolFactory};
 
     use super::*;
-    use context::{FContext, FContextImpl, CID_HEADER};
+    use context::{FContext, FContextImpl, CID_HEADER, OP_ID_HEADER};
 
     static BASIC_FRAME: &'static [u8] = &[
         0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114
@@ -367,7 +368,7 @@ mod test {
         let mut f_input_protocol = input_prot_factory.get_protocol(input_transport);
         let mut ctx = FContextImpl::new(None);
         f_input_protocol.read_response_header(&mut ctx).unwrap();
-        assert_eq!("bar", ctx.response_headers().get("foo").unwrap());
+        assert_eq!("bar", ctx.response_header("foo").unwrap());
     }
 
     #[test]
@@ -482,5 +483,95 @@ mod test {
         let mut ctx = FContextImpl::new(None);
         ctx.add_request_header("foo", "bar");
         f_output_protocol.write_request_header(&ctx).unwrap();
+    }
+
+    static WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH: &'static str =
+        "write_read_request_header_symmetric_file_path.txt";
+
+    #[test]
+    fn test_write_read_request_header_symmetric() {
+        // create ctx
+        let mut ctx = FContextImpl::new(Some("123"));
+        ctx.add_request_header("foo", "bar");
+        ctx.add_request_header("hello", "world");
+        let op_id = ctx.request_header(OP_ID_HEADER).unwrap();
+
+        // call write_request_header
+        {
+            // NOTE: writing to file so I can easily read it back, no good way to do that in memory
+            // due to the nature of the trait objects used in the thrift api
+            let test_file =
+                fs::File::create(WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH).unwrap();
+            let output_protocol_factory =
+                FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+            let mut f_output_protocol = output_protocol_factory.get_protocol(Box::new(test_file));
+            f_output_protocol.write_request_header(&ctx).unwrap();
+        }
+
+        // read it with read_request_header
+        let result = {
+            let test_file = fs::File::open(WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH).unwrap();
+            let input_prot_factory =
+                FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+            let mut f_input_protocol = input_prot_factory.get_protocol(Box::new(test_file));
+            f_input_protocol.read_request_header().unwrap()
+        };
+
+        // assert that the deserialized context is the same
+        assert_eq!("world", result.request_header("hello").unwrap());
+        assert_eq!("bar", result.request_header("foo").unwrap());
+        assert_eq!("123", result.correlation_id());
+        assert!(op_id != result.request_header(OP_ID_HEADER).unwrap());
+        assert_eq!(op_id, result.response_header(OP_ID_HEADER).unwrap());
+
+        // clean up test file
+        fs::remove_file(WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH).unwrap();
+    }
+
+    static WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH: &'static str =
+        "write_read_response_header_symmetric_file_path.txt";
+
+    #[test]
+    fn test_write_read_response_header_symmetric() {
+        // create ctx
+        let mut ctx = FContextImpl::new(Some("123"));
+        ctx.add_response_header("foo", "bar");
+        ctx.add_response_header("hello", "world");
+        let op_id = ctx.request_header(OP_ID_HEADER).unwrap().clone();
+        ctx.add_response_header(OP_ID_HEADER, &op_id);
+
+        // call write_response_header
+        {
+            // NOTE: writing to file so I can easily read it back, no good way to do that in memory
+            // due to the nature of the trait objects used in the thrift api
+            let test_file =
+                fs::File::create(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
+            let output_protocol_factory =
+                FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+            let mut f_output_protocol = output_protocol_factory.get_protocol(Box::new(test_file));
+            f_output_protocol.write_response_header(&ctx).unwrap();
+        }
+
+        // read it with read_request_header
+        let result = {
+            let mut result_ctx = FContextImpl::new(Some("123"));
+            let test_file = fs::File::open(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
+            let input_prot_factory =
+                FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+            let mut f_input_protocol = input_prot_factory.get_protocol(Box::new(test_file));
+            f_input_protocol
+                .read_response_header(&mut result_ctx)
+                .unwrap();
+            result_ctx
+        };
+
+        // assert that the deserialized context is the same
+        assert_eq!("world", result.response_header("hello").unwrap());
+        assert_eq!("bar", result.response_header("foo").unwrap());
+        assert_eq!("123", result.correlation_id());
+        assert!(result.response_header(OP_ID_HEADER).is_none());
+
+        // clean up test file
+        fs::remove_file(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
     }
 }

@@ -45,6 +45,9 @@ pub trait FContext: Clone {
     // for chaining calls.
     fn add_response_header<S: Into<String>>(&mut self, name: S, value: S) -> &mut Self;
 
+    // response_header gets the named response header.
+    fn response_header(&self, &str) -> Option<&String>;
+
     // response_headers returns the response headers map.
     fn response_headers(&self) -> &BTreeMap<String, String>;
 
@@ -120,6 +123,10 @@ impl FContext for FContextImpl {
         self
     }
 
+    fn response_header(&self, name: &str) -> Option<&String> {
+        self.response_headers.get(name)
+    }
+
     fn response_headers(&self) -> &BTreeMap<String, String> {
         &self.response_headers
     }
@@ -189,8 +196,8 @@ mod test {
         let mut ctx = FContextImpl::new(Some(cid));
         ctx.add_response_header("foo", "bar")
             .add_response_header("baz", "qux");
-        assert_eq!(Some(&"bar".to_string()), ctx.response_headers().get("foo"));
-        assert_eq!(Some(&"qux".to_string()), ctx.response_headers().get("baz"));
+        assert_eq!(Some(&"bar".to_string()), ctx.response_header("foo"));
+        assert_eq!(Some(&"qux".to_string()), ctx.response_header("baz"));
     }
 
     #[test]
