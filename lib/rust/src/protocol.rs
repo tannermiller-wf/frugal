@@ -3,13 +3,14 @@ use std::error::Error;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use byteorder::{BigEndian, WriteBytesExt};
 use thrift;
 use thrift::protocol::{TInputProtocol, TInputProtocolFactory, TOutputProtocol,
                        TOutputProtocolFactory};
 use thrift::transport::{TReadTransport, TWriteTransport};
 
 use context::{self, FContext, FContextImpl};
+use util::{read_exact, read_size};
 
 const PROTOCOL_V0: u8 = 0x00;
 
@@ -47,27 +48,6 @@ impl io::Write for TWriteTransportWrapper {
     fn flush(&mut self) -> io::Result<()> {
         self.0.lock().unwrap().flush()
     }
-}
-
-fn read_exact<R: io::Read>(reader: &mut R, size: usize) -> thrift::Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(size);
-    buf.resize(size, 0);
-    reader.read_exact(&mut buf).map_err(|err| {
-        match err.kind() {
-                        io::ErrorKind::UnexpectedEof => thrift::new_transport_error(thrift::TransportErrorKind::EndOfFile, err.description()),
-                        _ => thrift::new_transport_error(thrift::TransportErrorKind::Unknown, format!("frugal: error reading protocol headers in unmarshalHeaders reading header size: {}", err.description())),
-                    }
-    })?;
-    Ok(buf)
-}
-
-fn read_size<R: io::Read>(reader: &mut R) -> thrift::Result<usize> {
-    let buf = read_exact(reader, 4)?;
-    let mut buf_reader = io::Cursor::new(buf);
-    buf_reader
-        .read_u32::<BigEndian>()
-        .map_err(|err| err.into())
-        .map(|size| size as usize)
 }
 
 enum ProtocolMarshaler {
@@ -177,6 +157,7 @@ pub struct FInputProtocol {
 }
 
 // TODO: Should these deal with the FContext trait and not the impl?
+//       This probably means waiting for the impl Trait feature to be stable
 impl FInputProtocol {
     pub fn read_request_header(&mut self) -> thrift::Result<FContextImpl> {
         let headers = read_exact(&mut self.transport, 1)
@@ -274,6 +255,14 @@ impl FOutputProtocol {
                             Ok(())
                         }
                     })
+            })
+            .and_then(|_| {
+                self.transport.flush().map_err(|err| {
+                    thrift::new_transport_error(
+                        thrift::TransportErrorKind::Unknown,
+                        format!("frugal: failed to flush transport: {}", err.description()),
+                    )
+                })
             })
     }
 
@@ -376,7 +365,7 @@ mod test {
         // TODO: find a better mocking story
         struct MockTransport;
         impl Write for MockTransport {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
                 Err(io::Error::new(io::ErrorKind::TimedOut, "write failed"))
             }
 
@@ -412,7 +401,7 @@ mod test {
         // TODO: find a better mocking story
         struct MockTransport;
         impl Write for MockTransport {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
                 Ok(0)
             }
 

@@ -15,5 +15,7 @@ pub mod protocol;
 pub mod transport;
 pub mod processor;
 
+mod util;
+
 // TODO:
 // * expose an Hyper HTTP Service implementation

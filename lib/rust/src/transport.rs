@@ -30,7 +30,7 @@ impl io::Write for MutexWriteTransport {
     }
 }
 
-header!{ (PayloadLimitHeader, "x-frugal-payload-limit") => [i64] }
+header!{ (PayloadLimit, "x-frugal-payload-limit") => [i64] }
 header!{ (ContentTransferEncodingHeader, "content-transfer-encoding") => [String] }
 
 static BASE64_ENCODING: &'static str = "base64";
@@ -64,8 +64,12 @@ impl FHTTPService {
 }
 
 fn error_resp(err_msg: String) -> Response {
+    error_resp_with_status(err_msg, hyper::StatusCode::BadRequest)
+}
+
+fn error_resp_with_status(err_msg: String, status: hyper::StatusCode) -> Response {
     Response::new()
-        .with_status(hyper::StatusCode::BadRequest)
+        .with_status(status)
         .with_header(ContentLength(err_msg.len() as u64))
         .with_body(err_msg)
 }
@@ -91,8 +95,8 @@ impl Service for FHTTPService {
 
         // pull out the payload limit header
         let limit = req.headers()
-            .get::<PayloadLimitHeader>()
-            .map(|&PayloadLimitHeader(val)| val);
+            .get::<PayloadLimit>()
+            .map(|&PayloadLimit(val)| val);
 
         // clone these for use in the future
         let processor = self.processor.clone();
@@ -117,11 +121,11 @@ impl Service for FHTTPService {
                     ))));
                 }
             };
+            let mut cursor = Cursor::new(decoded);
+            cursor.set_position(4);
 
             // get input transport and protocol
             let read_fac = TBufferedReadTransportFactory::new();
-            let mut cursor = Cursor::new(decoded);
-            cursor.set_position(4);
             let input = read_fac.create(Box::new(cursor));
             let mut iprot = input_protocol_factory.get_protocol(input);
 
@@ -133,10 +137,10 @@ impl Service for FHTTPService {
 
             // run processor
             if let Err(err) = processor.process(&mut iprot, &mut oprot) {
-                return Box::new(future::ok(error_resp(format!(
-                    "Error processing request: {}",
-                    err.description()
-                ))));
+                return Box::new(future::ok(error_resp_with_status(
+                    format!("Error processing request: {}", err.description()),
+                    hyper::StatusCode::InternalServerError,
+                )));
             };
 
             // get len in a block to release the lock as soon as it's done
@@ -145,10 +149,13 @@ impl Service for FHTTPService {
             // enforce limit, if provided
             if let Some(limit) = limit {
                 if out_buf_len > limit as usize {
-                    return Box::new(future::ok(error_resp(format!(
-                        "Response size ({}) larger than requested size({})",
-                        out_buf_len, limit
-                    ))));
+                    return Box::new(future::ok(error_resp_with_status(
+                        format!(
+                            "Response size ({}) larger than requested size({})",
+                            out_buf_len, limit
+                        ),
+                        hyper::StatusCode::PayloadTooLarge,
+                    )));
                 }
             };
 
@@ -176,33 +183,212 @@ impl Service for FHTTPService {
 
 #[cfg(test)]
 mod test {
+    use std::fmt;
+
     use thrift;
 
-    use super::*;
+    use context::{FContext, FContextImpl};
     use protocol::{FInputProtocol, FOutputProtocol};
+    use super::*;
 
-    struct MockProcessor;
-
-    impl FProcessor for MockProcessor {
-        fn process(
-            &self,
-            iprot: &mut FInputProtocol,
-            oprot: &mut FOutputProtocol,
-        ) -> thrift::Result<()> {
-            Ok(())
+    #[test]
+    fn test_fhttp_service_bad_frame_error() {
+        struct MockProcessor;
+        impl FProcessor for MockProcessor {
+            fn process(
+                &self,
+                _: &mut FInputProtocol,
+                _: &mut FOutputProtocol,
+            ) -> thrift::Result<()> {
+                Ok(())
+            }
         }
+
+        let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactInputProtocolFactory::new(),
+        )));
+        let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactOutputProtocolFactory::new(),
+        )));
+        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+
+        let request: Request<hyper::Body> =
+            hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
+        let response = service.call(request).wait().unwrap();
+
+        assert_eq!(hyper::StatusCode::BadRequest, response.status());
+        assert_eq!(
+            "Invalid request size 0",
+            response
+                .body()
+                .collect()
+                .and_then(move |chunks| {
+                    let mut v = Vec::new();
+                    for chunk in chunks {
+                        v.append(&mut chunk.to_vec())
+                    }
+                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
+                })
+                .wait()
+                .unwrap()
+        );
     }
 
     #[test]
-    fn test_bad_content_length() {
-        //let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
-        //    thrift::protocol::TCompactInputProtocolFactory::new(),
-        //)));
-        //let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
-        //    thrift::protocol::TCompactOutputProtocolFactory::new(),
-        //)));
+    fn test_fhttp_service_processor_error() {
+        #[derive(Debug)]
+        struct MockError;
+        impl Error for MockError {
+            fn description(&self) -> &str {
+                "processor error"
+            }
+        }
+        impl fmt::Display for MockError {
+            fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+                write!(f, "processor error")
+            }
+        }
+        struct MockProcessor;
+        impl FProcessor for MockProcessor {
+            fn process(
+                &self,
+                _: &mut FInputProtocol,
+                _: &mut FOutputProtocol,
+            ) -> thrift::Result<()> {
+                // TODO: validate body is passed in here correctly
+                Err(thrift::Error::User(Box::new(MockError)))
+            }
+        }
 
-        //// TODO: Should we mock this out?
-        //let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+        let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactInputProtocolFactory::new(),
+        )));
+        let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactOutputProtocolFactory::new(),
+        )));
+        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+
+        let mut request: Request<hyper::Body> =
+            hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
+        request.set_body(base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]));
+        request.headers_mut().set(ContentLength(9));
+        let response = service.call(request).wait().unwrap();
+
+        assert_eq!(hyper::StatusCode::InternalServerError, response.status());
+        assert_eq!(
+            "Error processing request: processor error",
+            response
+                .body()
+                .collect()
+                .and_then(move |chunks| {
+                    let mut v = Vec::new();
+                    for chunk in chunks {
+                        v.append(&mut chunk.to_vec())
+                    }
+                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
+                })
+                .wait()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_fhttp_service_payload_too_large_error() {
+        struct MockProcessor;
+        impl FProcessor for MockProcessor {
+            fn process(
+                &self,
+                _: &mut FInputProtocol,
+                oprot: &mut FOutputProtocol,
+            ) -> thrift::Result<()> {
+                // TODO: validate body is passed in here correctly
+                let mut ctx = FContextImpl::new(None);
+                ctx.add_response_header("foo", "bar");
+                oprot.write_response_header(&mut ctx)
+            }
+        }
+
+        let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactInputProtocolFactory::new(),
+        )));
+        let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactOutputProtocolFactory::new(),
+        )));
+        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+
+        let mut request: Request<hyper::Body> =
+            hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
+        request.set_body(base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]));
+        request.headers_mut().set(ContentLength(9));
+        request.headers_mut().set(PayloadLimit(5));
+        let response = service.call(request).wait().unwrap();
+
+        assert_eq!(hyper::StatusCode::PayloadTooLarge, response.status());
+        assert_eq!(
+            "Response size (19) larger than requested size(5)",
+            response
+                .body()
+                .collect()
+                .and_then(move |chunks| {
+                    let mut v = Vec::new();
+                    for chunk in chunks {
+                        v.append(&mut chunk.to_vec())
+                    }
+                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
+                })
+                .wait()
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn test_fhttp_service_happy_path() {
+        struct MockProcessor;
+        impl FProcessor for MockProcessor {
+            fn process(
+                &self,
+                _: &mut FInputProtocol,
+                oprot: &mut FOutputProtocol,
+            ) -> thrift::Result<()> {
+                // TODO: validate body is passed in here correctly
+                let mut ctx = FContextImpl::new(None);
+                ctx.add_response_header("foo", "bar");
+                oprot.write_response_header(&mut ctx)
+            }
+        }
+
+        let in_prot_fac = Arc::new(FInputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactInputProtocolFactory::new(),
+        )));
+        let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactOutputProtocolFactory::new(),
+        )));
+        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+
+        let mut request: Request<hyper::Body> =
+            hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
+        request.set_body(base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]));
+        request.headers_mut().set(ContentLength(9));
+        let response = service.call(request).wait().unwrap();
+        assert_eq!(hyper::StatusCode::Ok, response.status());
+        let out = response
+            .body()
+            .collect()
+            .and_then(move |chunks| {
+                let mut v = Vec::new();
+                for chunk in chunks {
+                    v.append(&mut chunk.to_vec())
+                }
+                String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
+            })
+            .wait()
+            .unwrap();
+
+        let mut iprot = FInputProtocolFactory::new(Box::new(
+            thrift::protocol::TCompactInputProtocolFactory::new(),
+        )).get_protocol(Box::new(Cursor::new(base64::decode(&out[4..]).unwrap())));
+        let mut out_ctx = FContextImpl::new(None);
+        iprot.read_response_header(&mut out_ctx).unwrap();
+        assert_eq!("bar", out_ctx.response_header("foo").unwrap());
     }
 }

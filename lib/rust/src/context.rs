@@ -25,6 +25,7 @@ fn get_next_op_id() -> String {
     format!("{}", NEXT_OP_ID.fetch_add(1, Ordering::SeqCst))
 }
 
+// TODO: Consider using hyper::Headers for these headers
 pub trait FContext: Clone {
     // correlation_id returns the correlation id for the context.
     fn correlation_id(&self) -> &str;
@@ -58,6 +59,8 @@ pub trait FContext: Clone {
     fn timeout(&self) -> Duration;
 }
 
+// TODO: Document the tradeoffs in implementing this in Rust vs Go, e.g. Don't need an internal
+//       mutex as that is handled externally.
 #[derive(Debug)]
 pub struct FContextImpl {
     request_headers: BTreeMap<String, String>,
