@@ -191,6 +191,21 @@ mod test {
     use protocol::{FInputProtocol, FOutputProtocol};
     use super::*;
 
+    fn response_to_string(response: hyper::Response) -> String {
+        response
+            .body()
+            .collect()
+            .and_then(move |chunks| {
+                let mut v = Vec::new();
+                for chunk in chunks {
+                    v.append(&mut chunk.to_vec())
+                }
+                String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
+            })
+            .wait()
+            .unwrap()
+    }
+
     #[test]
     fn test_fhttp_service_bad_frame_error() {
         struct MockProcessor;
@@ -217,21 +232,7 @@ mod test {
         let response = service.call(request).wait().unwrap();
 
         assert_eq!(hyper::StatusCode::BadRequest, response.status());
-        assert_eq!(
-            "Invalid request size 0",
-            response
-                .body()
-                .collect()
-                .and_then(move |chunks| {
-                    let mut v = Vec::new();
-                    for chunk in chunks {
-                        v.append(&mut chunk.to_vec())
-                    }
-                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-                })
-                .wait()
-                .unwrap()
-        );
+        assert_eq!("Invalid request size 0", response_to_string(response),);
     }
 
     #[test]
@@ -277,18 +278,7 @@ mod test {
         assert_eq!(hyper::StatusCode::InternalServerError, response.status());
         assert_eq!(
             "Error processing request: processor error",
-            response
-                .body()
-                .collect()
-                .and_then(move |chunks| {
-                    let mut v = Vec::new();
-                    for chunk in chunks {
-                        v.append(&mut chunk.to_vec())
-                    }
-                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-                })
-                .wait()
-                .unwrap()
+            response_to_string(response),
         );
     }
 
@@ -326,18 +316,7 @@ mod test {
         assert_eq!(hyper::StatusCode::PayloadTooLarge, response.status());
         assert_eq!(
             "Response size (19) larger than requested size(5)",
-            response
-                .body()
-                .collect()
-                .and_then(move |chunks| {
-                    let mut v = Vec::new();
-                    for chunk in chunks {
-                        v.append(&mut chunk.to_vec())
-                    }
-                    String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-                })
-                .wait()
-                .unwrap()
+            response_to_string(response),
         );
     }
 
@@ -371,18 +350,7 @@ mod test {
         request.headers_mut().set(ContentLength(9));
         let response = service.call(request).wait().unwrap();
         assert_eq!(hyper::StatusCode::Ok, response.status());
-        let out = response
-            .body()
-            .collect()
-            .and_then(move |chunks| {
-                let mut v = Vec::new();
-                for chunk in chunks {
-                    v.append(&mut chunk.to_vec())
-                }
-                String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-            })
-            .wait()
-            .unwrap();
+        let out = response_to_string(response);
 
         let mut iprot = FInputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactInputProtocolFactory::new(),
