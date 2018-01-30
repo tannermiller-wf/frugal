@@ -11,8 +11,7 @@ use hyper::header::{ContentLength, ContentType};
 use hyper::server::{Request, Response, Service};
 use mime;
 use thrift::transport::{TBufferedReadTransportFactory, TBufferedWriteTransportFactory,
-                        TReadTransport, TReadTransportFactory, TWriteTransport,
-                        TWriteTransportFactory};
+                        TReadTransportFactory, TWriteTransportFactory};
 
 use processor::FProcessor;
 use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
@@ -39,9 +38,16 @@ lazy_static! {
     static ref FRUGAL_CONTENT_TYPE: mime::Mime = "application/x-frugal".parse().unwrap();
 }
 
-pub trait FReadTransport: TReadTransport {}
+fn error_resp(err_msg: String) -> Response {
+    error_resp_with_status(err_msg, hyper::StatusCode::BadRequest)
+}
 
-pub trait FWriteTransport: TWriteTransport {}
+fn error_resp_with_status(err_msg: String, status: hyper::StatusCode) -> Response {
+    Response::new()
+        .with_status(status)
+        .with_header(ContentLength(err_msg.len() as u64))
+        .with_body(err_msg)
+}
 
 pub struct FHTTPService {
     processor: Arc<FProcessor>,
@@ -61,17 +67,6 @@ impl FHTTPService {
             output_protocol_factory,
         }
     }
-}
-
-fn error_resp(err_msg: String) -> Response {
-    error_resp_with_status(err_msg, hyper::StatusCode::BadRequest)
-}
-
-fn error_resp_with_status(err_msg: String, status: hyper::StatusCode) -> Response {
-    Response::new()
-        .with_status(status)
-        .with_header(ContentLength(err_msg.len() as u64))
-        .with_body(err_msg)
 }
 
 impl Service for FHTTPService {
@@ -359,4 +354,6 @@ mod test {
         iprot.read_response_header(&mut out_ctx).unwrap();
         assert_eq!("bar", out_ctx.response_header("foo").unwrap());
     }
+
+    // TODO: Tests with stood up http server
 }
