@@ -18,4 +18,5 @@ pub mod processor;
 mod util;
 
 // TODO:
-// * expose an Hyper HTTP Service implementation
+// * Run benchmarks among all the frugal implementations, simple service that pings as hard as it
+// can, compare Go, Rust, Python?
