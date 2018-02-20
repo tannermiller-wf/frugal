@@ -2,19 +2,21 @@ use std::error::Error;
 use std::io::{self, Cursor};
 use std::str::from_utf8 as str_from_utf8;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use base64;
 use byteorder::{BigEndian, WriteBytesExt};
-use futures::future::{self, Future};
+use futures::future::{self, Either, Future};
 use futures::stream::Stream;
 use hyper::{self, Body, Method, StatusCode, Uri};
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{qitem, Accept, ContentLength, ContentType, Headers};
-use hyper::server::{Request, Response, Service};
+use hyper::server::{NewService, Request, Response, Service};
 use mime;
 use thrift;
 use thrift::transport::{TBufferedReadTransportFactory, TBufferedWriteTransportFactory,
                         TReadTransport, TReadTransportFactory, TWriteTransportFactory};
+use tokio_core::reactor::{Core, Timeout};
 
 use context::FContextImpl;
 use processor::FProcessor;
@@ -45,6 +47,7 @@ lazy_static! {
 }
 
 pub struct FHttpTransportBuilder {
+    core: Core,
     client: Client<HttpConnector, Body>,
     url: Uri,
     request_size_limit: Option<usize>,
@@ -54,8 +57,9 @@ pub struct FHttpTransportBuilder {
 }
 
 impl FHttpTransportBuilder {
-    pub fn new(client: Client<HttpConnector, Body>, url: Uri) -> Self {
+    pub fn new(client: Client<HttpConnector, Body>, core: Core, url: Uri) -> Self {
         FHttpTransportBuilder {
+            core: core,
             client: client,
             url: url,
             request_size_limit: None,
@@ -90,6 +94,7 @@ impl FHttpTransportBuilder {
 
     pub fn build(self) -> FHttpTransport {
         FHttpTransport {
+            core: self.core,
             client: self.client,
             url: self.url,
             request_size_limit: self.request_size_limit,
@@ -101,6 +106,7 @@ impl FHttpTransportBuilder {
 }
 
 pub struct FHttpTransport {
+    core: Core,
     client: Client<HttpConnector, Body>,
     url: Uri,
     request_size_limit: Option<usize>,
@@ -110,12 +116,12 @@ pub struct FHttpTransport {
 }
 
 impl FTransport for FHttpTransport {
-    fn oneway(&self, ctx: &FContextImpl, payload: &[u8]) -> Option<thrift::Result<()>> {
+    fn oneway(&mut self, ctx: &FContextImpl, payload: &[u8]) -> Option<thrift::Result<()>> {
         self.request(ctx, payload).map(|x| x.map(|_| ()))
     }
 
     fn request(
-        &self,
+        &mut self,
         ctx: &FContextImpl,
         payload: &[u8],
     ) -> Option<thrift::Result<Box<TReadTransport>>> {
@@ -139,17 +145,16 @@ impl FTransport for FHttpTransport {
                 )));
             }
         }
-
         // Encode request payload
         let mut encoded = Vec::new();
         encoded.append(&mut base64::encode(payload).into_bytes());
 
         // Initialize request
         let mut request: Request<Body> = Request::new(Method::Post, self.url.clone());
+        request
+            .headers_mut()
+            .set(ContentLength(encoded.len() as u64));
         request.set_body(encoded);
-
-        // TODO: Hyper does not currently support timeouts, there is a hyper-timeout-connector that
-        // does support timeouts, but at the Client and not the Request level.
 
         // add user supplied headers first, to avoid monkeying
         // with the size limits headers below.
@@ -179,8 +184,12 @@ impl FTransport for FHttpTransport {
             request.headers_mut().set(PayloadLimit(size as i64));
         }
 
+        // TODO: fix unwrap
+        // TODO: use fcontext timeout
+        let timeout = Timeout::new(Duration::from_secs(5), &self.core.handle()).unwrap();
+
         // Make the HTTP request
-        let body_result = self.client
+        let initial_request = self.client
             .request(request)
             .map_err(|err| thrift::Error::User(Box::new(err)))
             .and_then(|response| {
@@ -191,41 +200,62 @@ impl FTransport for FHttpTransport {
                     ));
                 }
 
-                let status_code = response.status().as_u16();
+                Ok(response)
+            });
 
-                response
-                    .body()
-                    .collect()
-                    .map_err(|err| thrift::Error::User(Box::new(err)))
-                    .and_then(move |chunks| {
-                        let mut buf = Vec::new();
-                        for chunk in chunks {
-                            buf.append(&mut chunk.to_vec());
-                        }
+        // Handle timeout
+        let either = initial_request.select2(timeout).then(|res| match res {
+            Ok(Either::A((resp, _))) => Ok(resp),
+            Ok(Either::B((_, _to))) => Err(thrift::new_transport_error(
+                thrift::TransportErrorKind::TimedOut,
+                "timed out",
+            )),
+            Err(Either::A((resp_err, _))) => Err(resp_err),
+            Err(Either::B((_, _to_err))) => Err(thrift::new_transport_error(
+                thrift::TransportErrorKind::TimedOut,
+                "time out error",
+            )),
+        });
 
-                        {
-                            let buf_str = match str_from_utf8(&buf) {
-                                Ok(s) => s,
-                                // NOTE: thrift::Error really should implement From<Utf8Error> too
-                                Err(err) => return Err(thrift::Error::User(Box::new(err))),
-                            };
+        let response = match self.core.run(either) {
+            Ok(response) => response,
+            Err(err) => return Some(Err(thrift::Error::User(Box::new(err)))),
+        };
 
-                            if status_code >= 300 {
-                                return Err(thrift::new_transport_error(
-                                    thrift::TransportErrorKind::Unknown,
-                                    format!(
-                                        "response errored with code {} and message {}",
-                                        status_code, buf_str
-                                    ),
-                                ));
-                            }
-                        }
+        let status_code = response.status().as_u16();
 
-                        base64::decode(&buf).map_err(|err| thrift::Error::User(Box::new(err)))
-                    })
-                    .wait()
-            })
-            .wait();
+        let response_handler = response
+            .body()
+            .collect()
+            .map_err(|err| thrift::Error::User(Box::new(err)))
+            .and_then(move |chunks| {
+                let mut buf = Vec::new();
+                for chunk in chunks {
+                    buf.append(&mut chunk.to_vec());
+                }
+
+                {
+                    let buf_str = match str_from_utf8(&buf) {
+                        Ok(s) => s,
+                        // NOTE: thrift::Error really should implement From<Utf8Error> too
+                        Err(err) => return Err(thrift::Error::User(Box::new(err))),
+                    };
+
+                    if status_code >= 300 {
+                        return Err(thrift::new_transport_error(
+                            thrift::TransportErrorKind::Unknown,
+                            format!(
+                                "response errored with code {} and message {}",
+                                status_code, buf_str
+                            ),
+                        ));
+                    }
+                }
+
+                base64::decode(&buf).map_err(|err| thrift::Error::User(Box::new(err)))
+            });
+        // TODO: Combine this core.run with the above one using a combinator.
+        let body_result = self.core.run(response_handler);
 
         if let Err(err) = body_result {
             return Some(Err(err));
@@ -278,19 +308,19 @@ fn error_resp_with_status(err_msg: String, status: hyper::StatusCode) -> Respons
         .with_body(err_msg)
 }
 
-pub struct FHTTPService {
+pub struct FHttpService {
     processor: Arc<FProcessor>,
     input_protocol_factory: Arc<FInputProtocolFactory>,
     output_protocol_factory: Arc<FOutputProtocolFactory>,
 }
 
-impl FHTTPService {
+impl FHttpService {
     pub fn new(
         processor: Arc<FProcessor>,
         input_protocol_factory: Arc<FInputProtocolFactory>,
         output_protocol_factory: Arc<FOutputProtocolFactory>,
     ) -> Self {
-        FHTTPService {
+        FHttpService {
             processor,
             input_protocol_factory,
             output_protocol_factory,
@@ -298,7 +328,18 @@ impl FHTTPService {
     }
 }
 
-impl Service for FHTTPService {
+impl NewService for FHttpService {
+    type Request = Request;
+    type Response = Response;
+    type Error = hyper::Error;
+    type Instance = Self;
+
+    fn new_service(&self) -> Result<Self, io::Error> {
+        Ok(self.clone())
+    }
+}
+
+impl Service for FHttpService {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
@@ -383,19 +424,19 @@ impl Service for FHTTPService {
                 }
             };
 
-            let mut encoded = Vec::new();
-
             // encode the length as the initial 4 bytes (frame size)
-            if let Err(err) = encoded.write_u32::<BigEndian>(out_buf_len as u32) {
+            let mut output_buf = Vec::new();
+            if let Err(err) = output_buf.write_u32::<BigEndian>(out_buf_len as u32) {
                 return Box::new(future::err(err.into()));
             };
 
             // encode as base64
-            encoded.append(&mut base64::encode(&*out_buf.lock().unwrap()).into_bytes());
+            output_buf.extend_from_slice(&*out_buf.lock().unwrap());
+            let encoded = base64::encode(&output_buf).into_bytes();
 
             // write to response
             Box::new(future::ok(
-                Response::new()
+                Response::<hyper::Body>::new()
                     .with_header(ContentType(FRUGAL_CONTENT_TYPE.clone()))
                     .with_header(ContentLength(encoded.len() as u64))
                     .with_header(ContentTransferEncodingHeader(BASE64_ENCODING.to_string()))
@@ -405,11 +446,22 @@ impl Service for FHTTPService {
     }
 }
 
+impl Clone for FHttpService {
+    fn clone(&self) -> Self {
+        FHttpService {
+            processor: self.processor.clone(),
+            input_protocol_factory: self.input_protocol_factory.clone(),
+            output_protocol_factory: self.output_protocol_factory.clone(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::fmt;
 
     use thrift;
+    use thrift::protocol::TOutputProtocol;
 
     use context::{FContext, FContextImpl};
     use protocol::{FInputProtocol, FOutputProtocol};
@@ -449,7 +501,7 @@ mod test {
         let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactOutputProtocolFactory::new(),
         )));
-        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+        let service = FHttpService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
 
         let request: Request<hyper::Body> =
             hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
@@ -491,7 +543,7 @@ mod test {
         let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactOutputProtocolFactory::new(),
         )));
-        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+        let service = FHttpService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
 
         let mut request: Request<hyper::Body> =
             hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
@@ -528,7 +580,7 @@ mod test {
         let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactOutputProtocolFactory::new(),
         )));
-        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+        let service = FHttpService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
 
         let mut request: Request<hyper::Body> =
             hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
@@ -556,7 +608,8 @@ mod test {
                 // TODO: validate body is passed in here correctly
                 let mut ctx = FContextImpl::new(None);
                 ctx.add_response_header("foo", "bar");
-                oprot.write_response_header(&mut ctx)
+                oprot.write_response_header(&mut ctx)?;
+                oprot.flush()
             }
         }
 
@@ -566,7 +619,7 @@ mod test {
         let out_prot_fac = Arc::new(FOutputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactOutputProtocolFactory::new(),
         )));
-        let service = FHTTPService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
+        let service = FHttpService::new(Arc::new(MockProcessor), in_prot_fac, out_prot_fac);
 
         let mut request: Request<hyper::Body> =
             hyper::Request::new(hyper::Method::Post, "http://example.com".parse().unwrap());
@@ -576,9 +629,11 @@ mod test {
         assert_eq!(hyper::StatusCode::Ok, response.status());
         let out = response_to_string(response);
 
+        let mut cursor = Cursor::new(base64::decode(&out).unwrap());
+        cursor.set_position(4);
         let mut iprot = FInputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactInputProtocolFactory::new(),
-        )).get_protocol(Box::new(Cursor::new(base64::decode(&out[4..]).unwrap())));
+        )).get_protocol(Box::new(cursor));
         let mut out_ctx = FContextImpl::new(None);
         iprot.read_response_header(&mut out_ctx).unwrap();
         assert_eq!("bar", out_ctx.response_header("foo").unwrap());

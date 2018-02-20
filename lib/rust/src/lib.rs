@@ -8,6 +8,7 @@ extern crate hyper;
 extern crate lazy_static;
 extern crate mime;
 extern crate thrift;
+extern crate tokio_core;
 extern crate uuid;
 
 pub mod context;

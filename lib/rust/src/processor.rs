@@ -261,7 +261,6 @@ mod test {
         ];
         assert_eq!(response_ctx, &test_bytes[..34]);
 
-        println!("bytes: {:?}", &test_bytes[34..]);
         assert_eq!("ping".as_bytes(), &test_bytes[42..46]);
         assert_eq!("Unknown function ping".as_bytes(), &test_bytes[57..78]);
 
