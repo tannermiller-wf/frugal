@@ -2,7 +2,6 @@ use std::error::Error;
 use std::io::{self, Cursor};
 use std::str::from_utf8 as str_from_utf8;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use base64;
 use byteorder::{BigEndian, WriteBytesExt};
@@ -184,9 +183,15 @@ impl FTransport for FHttpTransport {
             request.headers_mut().set(PayloadLimit(size as i64));
         }
 
-        // TODO: fix unwrap
-        // TODO: use fcontext timeout
-        let timeout = Timeout::new(Duration::from_secs(5), &self.core.handle()).unwrap();
+        let timeout = match Timeout::new(ctx.timeout(), &self.core.handle()) {
+            Ok(to) => to,
+            Err(err) => {
+                return Some(Err(thrift::new_transport_error(
+                    thrift::TransportErrorKind::Unknown,
+                    format!("setting timeout error: {}", &err),
+                )))
+            }
+        };
 
         // Make the HTTP request
         let initial_request = self.client

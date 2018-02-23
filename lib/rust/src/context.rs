@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::time::Duration;
 
-use chrono::Duration;
 use uuid::Uuid;
 
 // Header containing correlation id
@@ -15,7 +15,11 @@ pub static TIMEOUT_HEADER: &'static str = "_timeout";
 
 lazy_static! {
     // Default request timeout
-    static ref DEFAULT_TIMEOUT: Duration = Duration::seconds(5);
+    static ref DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+}
+
+fn duration_to_ms_string(d: &Duration) -> String {
+    format!("{}", d.as_secs() * 1000 + d.subsec_nanos() as u64 / 1000000)
 }
 
 // used to track the op ids
@@ -78,7 +82,7 @@ impl FContextImpl {
         request.insert(CID_HEADER.to_string(), cid.to_string());
         request.insert(
             TIMEOUT_HEADER.to_string(),
-            format!("{}", DEFAULT_TIMEOUT.num_milliseconds()),
+            duration_to_ms_string(&DEFAULT_TIMEOUT),
         );
         request.insert(OP_ID_HEADER.to_string(), get_next_op_id());
 
@@ -135,10 +139,8 @@ impl FContext for FContextImpl {
     }
 
     fn set_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.request_headers.insert(
-            TIMEOUT_HEADER.to_string(),
-            format!("{}", timeout.num_milliseconds()),
-        );
+        self.request_headers
+            .insert(TIMEOUT_HEADER.to_string(), duration_to_ms_string(&timeout));
         self
     }
 
@@ -146,7 +148,7 @@ impl FContext for FContextImpl {
         match self.request_headers.get(TIMEOUT_HEADER) {
             Some(timeout) => timeout
                 .parse()
-                .map(Duration::milliseconds)
+                .map(Duration::from_millis)
                 .unwrap_or_else(|_| DEFAULT_TIMEOUT.clone()),
             None => DEFAULT_TIMEOUT.clone(),
         }
@@ -175,10 +177,10 @@ mod test {
     #[test]
     fn test_timeout() {
         let mut ctx = FContextImpl::new(None);
-        assert_eq!(Duration::seconds(5), ctx.timeout());
+        assert_eq!(Duration::from_secs(5), ctx.timeout());
 
-        ctx.set_timeout(Duration::seconds(10));
-        assert_eq!(Duration::seconds(10), ctx.timeout());
+        ctx.set_timeout(Duration::from_secs(10));
+        assert_eq!(Duration::from_secs(10), ctx.timeout());
     }
 
     #[test]
