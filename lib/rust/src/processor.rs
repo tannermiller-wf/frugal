@@ -4,7 +4,7 @@ use std::error::Error;
 use thrift;
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
-use context::{FContext, FContextImpl};
+use context::FContext;
 use protocol::{FInputProtocol, FOutputProtocol};
 
 pub trait ServiceMiddleware {}
@@ -24,7 +24,7 @@ pub trait FProcessor {
 pub trait FProcessorFunction {
     fn process(
         &self,
-        ctx: &mut FContextImpl, // TODO: Can we use FContext?
+        ctx: &mut FContext,
         iprot: &mut FInputProtocol,
         oprot: &mut FOutputProtocol,
     ) -> thrift::Result<()>;
@@ -118,7 +118,7 @@ mod test {
     impl FProcessorFunction for MockProcessorFunction {
         fn process(
             &self,
-            ctx: &mut FContextImpl, // TODO: Can we use FContext?
+            ctx: &mut FContext,
             iprot: &mut FInputProtocol,
             oprot: &mut FOutputProtocol,
         ) -> thrift::Result<()> {
@@ -170,7 +170,7 @@ mod test {
         impl FProcessorFunction for ErrorMockProcessorFunction {
             fn process(
                 &self,
-                ctx: &mut FContextImpl, // TODO: Can we use FContext?
+                ctx: &mut FContext,
                 iprot: &mut FInputProtocol,
                 oprot: &mut FOutputProtocol,
             ) -> thrift::Result<()> {

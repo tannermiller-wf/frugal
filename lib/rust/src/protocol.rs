@@ -9,7 +9,7 @@ use thrift::protocol::{TInputProtocol, TInputProtocolFactory, TOutputProtocol,
                        TOutputProtocolFactory};
 use thrift::transport::{TReadTransport, TWriteTransport};
 
-use context::{self, FContext, FContextImpl};
+use context::{self, FContext};
 use util::{read_exact, read_size};
 
 const PROTOCOL_V0: u8 = 0x00;
@@ -156,15 +156,13 @@ pub struct FInputProtocol {
     protocol: Box<TInputProtocol + Send>,
 }
 
-// TODO: Should these deal with the FContext trait and not the impl?
-//       This probably means waiting for the impl Trait feature to be stable
 impl FInputProtocol {
-    pub fn read_request_header(&mut self) -> thrift::Result<FContextImpl> {
+    pub fn read_request_header(&mut self) -> thrift::Result<FContext> {
         let headers = read_exact(&mut self.transport, 1)
             .and_then(|buf| ProtocolMarshaler::get(buf[0]))
             .and_then(|marshaler| marshaler.unmarshal_headers(&mut self.transport))?;
 
-        let mut ctx = FContextImpl::new(None);
+        let mut ctx = FContext::new(None);
         for (k, v) in headers.iter() {
             // the new fcontext will have a new op id so don't copy the old one
             if k != context::OP_ID_HEADER {
@@ -187,7 +185,7 @@ impl FInputProtocol {
         Ok(ctx)
     }
 
-    pub fn read_response_header(&mut self, ctx: &mut FContextImpl) -> thrift::Result<()> {
+    pub fn read_response_header(&mut self, ctx: &mut FContext) -> thrift::Result<()> {
         let headers = read_exact(&mut self.transport, 1)
             .and_then(|buf| ProtocolMarshaler::get(buf[0]))
             .and_then(|marshaler| marshaler.unmarshal_headers(&mut self.transport))?;
@@ -364,11 +362,11 @@ impl FOutputProtocol {
             })
     }
 
-    pub fn write_request_header(&mut self, ctx: &FContextImpl) -> thrift::Result<()> {
+    pub fn write_request_header(&mut self, ctx: &FContext) -> thrift::Result<()> {
         self.write_header(ctx.request_headers())
     }
 
-    pub fn write_response_header(&mut self, ctx: &FContextImpl) -> thrift::Result<()> {
+    pub fn write_response_header(&mut self, ctx: &FContext) -> thrift::Result<()> {
         self.write_header(ctx.response_headers())
     }
 }
@@ -516,7 +514,7 @@ mod test {
     use thrift::protocol::{TBinaryInputProtocolFactory, TBinaryOutputProtocolFactory};
 
     use super::*;
-    use context::{FContext, FContextImpl, CID_HEADER, OP_ID_HEADER};
+    use context::{FContext, CID_HEADER, OP_ID_HEADER};
 
     static BASIC_FRAME: &'static [u8] = &[
         0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114
@@ -565,7 +563,7 @@ mod test {
             FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
         let input_transport = Box::new(Cursor::new(BASIC_FRAME));
         let mut f_input_protocol = input_prot_factory.get_protocol(input_transport);
-        let mut ctx = FContextImpl::new(None);
+        let mut ctx = FContext::new(None);
         f_input_protocol.read_response_header(&mut ctx).unwrap();
         assert_eq!("bar", ctx.response_header("foo").unwrap());
     }
@@ -588,7 +586,7 @@ mod test {
             FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
-        let mut ctx = FContextImpl::new(None);
+        let mut ctx = FContext::new(None);
         ctx.add_request_header("foo", "bar");
         let result = f_output_protocol.write_request_header(&ctx);
         match result {
@@ -624,7 +622,7 @@ mod test {
             FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
-        let mut ctx = FContextImpl::new(None);
+        let mut ctx = FContext::new(None);
         ctx.add_request_header("foo", "bar");
         let result = f_output_protocol.write_request_header(&ctx);
         match result {
@@ -679,7 +677,7 @@ mod test {
             FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
-        let mut ctx = FContextImpl::new(None);
+        let mut ctx = FContext::new(None);
         ctx.add_request_header("foo", "bar");
         f_output_protocol.write_request_header(&ctx).unwrap();
     }
@@ -690,7 +688,7 @@ mod test {
     #[test]
     fn test_write_read_request_header_symmetric() {
         // create ctx
-        let mut ctx = FContextImpl::new(Some("123"));
+        let mut ctx = FContext::new(Some("123"));
         ctx.add_request_header("foo", "bar");
         ctx.add_request_header("hello", "world");
         let op_id = ctx.request_header(OP_ID_HEADER).unwrap();
@@ -733,7 +731,7 @@ mod test {
     #[test]
     fn test_write_read_response_header_symmetric() {
         // create ctx
-        let mut ctx = FContextImpl::new(Some("123"));
+        let mut ctx = FContext::new(Some("123"));
         ctx.add_response_header("foo", "bar");
         ctx.add_response_header("hello", "world");
         let op_id = ctx.request_header(OP_ID_HEADER).unwrap().clone();
@@ -753,7 +751,7 @@ mod test {
 
         // read it with read_request_header
         let result = {
-            let mut result_ctx = FContextImpl::new(Some("123"));
+            let mut result_ctx = FContext::new(Some("123"));
             let test_file = fs::File::open(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
             let input_prot_factory =
                 FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));

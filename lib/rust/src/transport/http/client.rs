@@ -12,7 +12,7 @@ use thrift;
 use thrift::transport::{TBufferedReadTransportFactory, TReadTransport, TReadTransportFactory};
 use tokio_core::reactor::{Core, Timeout};
 
-use context::{FContext, FContextImpl};
+use context::FContext;
 use transport::FTransport;
 use util::read_size;
 use super::*;
@@ -24,7 +24,7 @@ pub struct FHttpTransportBuilder {
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
     request_headers: Option<Headers>,
-    get_request_headers: Option<Box<Fn(&FContextImpl) -> Headers>>,
+    get_request_headers: Option<Box<Fn(&FContext) -> Headers>>,
 }
 
 impl FHttpTransportBuilder {
@@ -57,7 +57,7 @@ impl FHttpTransportBuilder {
 
     pub fn with_request_headers_from_fcontext(
         &mut self,
-        get_request_headers: Box<Fn(&FContextImpl) -> Headers>,
+        get_request_headers: Box<Fn(&FContext) -> Headers>,
     ) -> &mut Self {
         self.get_request_headers = Some(get_request_headers);
         self
@@ -83,17 +83,17 @@ pub struct FHttpTransport {
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
     request_headers: Option<Headers>,
-    get_request_headers: Option<Box<Fn(&FContextImpl) -> Headers>>,
+    get_request_headers: Option<Box<Fn(&FContext) -> Headers>>,
 }
 
 impl FTransport for FHttpTransport {
-    fn oneway(&mut self, ctx: &FContextImpl, payload: &[u8]) -> Option<thrift::Result<()>> {
+    fn oneway(&mut self, ctx: &FContext, payload: &[u8]) -> Option<thrift::Result<()>> {
         self.request(ctx, payload).map(|x| x.map(|_| ()))
     }
 
     fn request(
         &mut self,
-        ctx: &FContextImpl,
+        ctx: &FContext,
         payload: &[u8],
     ) -> Option<thrift::Result<Box<TReadTransport>>> {
         // TODO: isOpen check goes here if needed

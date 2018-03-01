@@ -21,8 +21,7 @@ use thrift::protocol::{TCompactInputProtocolFactory, TCompactOutputProtocolFacto
                        TOutputProtocol};
 use tokio_core::reactor::Core;
 
-// TODO: This is unwieldy to import both everywhere, consider if we need the trait
-use frugal::context::{FContext, FContextImpl};
+use frugal::context::FContext;
 use frugal::processor::FProcessor;
 use frugal::protocol::{FInputProtocol, FInputProtocolFactory, FOutputProtocol};
 use frugal::transport::FTransport;
@@ -32,7 +31,7 @@ header!{ (Foo, "foo") => [String] }
 header!{ (FirstHeader, "first-header") => [String] }
 header!{ (SecondHeader, "second-header") => [String] }
 
-fn get_request_headers(fctx: &FContextImpl) -> Headers {
+fn get_request_headers(fctx: &FContext) -> Headers {
     let mut headers = Headers::new();
     headers.set(FirstHeader(fctx.correlation_id().to_string()));
     headers.set(SecondHeader("yup".to_string()));
@@ -107,7 +106,7 @@ fn test_http_request_headers_with_context() {
         .with_request_headers_from_fcontext(Box::new(get_request_headers));
     let mut transport = builder.build();
 
-    let fctx = FContextImpl::new(None);
+    let fctx = FContext::new(None);
 
     setup_receiver.recv().unwrap();
 

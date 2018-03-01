@@ -196,7 +196,7 @@ mod test {
     use thrift;
     use hyper::Method;
 
-    use context::{FContext, FContextImpl};
+    use context::FContext;
     use protocol::{FInputProtocol, FOutputProtocol};
     use super::*;
 
@@ -301,7 +301,7 @@ mod test {
                 oprot: &mut FOutputProtocol,
             ) -> thrift::Result<()> {
                 // TODO: validate body is passed in here correctly
-                let mut ctx = FContextImpl::new(None);
+                let mut ctx = FContext::new(None);
                 ctx.add_response_header("foo", "bar");
                 oprot.write_response_header(&mut ctx)
             }
@@ -339,7 +339,7 @@ mod test {
                 oprot: &mut FOutputProtocol,
             ) -> thrift::Result<()> {
                 // TODO: validate body is passed in here correctly
-                let mut ctx = FContextImpl::new(None);
+                let mut ctx = FContext::new(None);
                 ctx.add_response_header("foo", "bar");
                 oprot.write_response_header(&mut ctx)?;
                 oprot.flush()
@@ -367,7 +367,7 @@ mod test {
         let mut iprot = FInputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactInputProtocolFactory::new(),
         )).get_protocol(Box::new(cursor));
-        let mut out_ctx = FContextImpl::new(None);
+        let mut out_ctx = FContext::new(None);
         iprot.read_response_header(&mut out_ctx).unwrap();
         assert_eq!("bar", out_ctx.response_header("foo").unwrap());
     }
