@@ -91,20 +91,17 @@ fn test_http_request_headers_with_context() {
 
     let core = Core::new().unwrap();
 
-    // TODO: why can't I hang the "with" method right off of the new() call?
-    let mut builder = FHttpTransportBuilder::new(
+    let mut transport = FHttpTransportBuilder::new(
         Client::new(&core.handle()),
         core,
         format!("http://{}", ADDRESS).parse().unwrap(),
-    );
-    builder
-        .with_request_headers({
-            let mut request_headers = Headers::new();
-            request_headers.set(Foo("bar".to_string()));
-            request_headers
-        })
-        .with_request_headers_from_fcontext(Box::new(get_request_headers));
-    let mut transport = builder.build();
+    ).with_request_headers({
+        let mut request_headers = Headers::new();
+        request_headers.set(Foo("bar".to_string()));
+        request_headers
+    })
+        .with_request_headers_from_fcontext(Box::new(get_request_headers))
+        .build();
 
     let fctx = FContext::new(None);
 

@@ -40,25 +40,25 @@ impl FHttpTransportBuilder {
         }
     }
 
-    pub fn with_request_size_limit(&mut self, request_size_limit: usize) -> &mut Self {
+    pub fn with_request_size_limit(mut self, request_size_limit: usize) -> Self {
         self.request_size_limit = Some(request_size_limit);
         self
     }
 
-    pub fn with_response_size_limit(&mut self, response_size_limit: usize) -> &mut Self {
+    pub fn with_response_size_limit(mut self, response_size_limit: usize) -> Self {
         self.response_size_limit = Some(response_size_limit);
         self
     }
 
-    pub fn with_request_headers(&mut self, request_headers: Headers) -> &mut Self {
+    pub fn with_request_headers(mut self, request_headers: Headers) -> Self {
         self.request_headers = Some(request_headers);
         self
     }
 
     pub fn with_request_headers_from_fcontext(
-        &mut self,
+        mut self,
         get_request_headers: Box<Fn(&FContext) -> Headers>,
-    ) -> &mut Self {
+    ) -> Self {
         self.get_request_headers = Some(get_request_headers);
         self
     }
