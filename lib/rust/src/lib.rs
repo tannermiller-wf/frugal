@@ -5,6 +5,8 @@ extern crate futures;
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 extern crate mime;
 extern crate thrift;
 extern crate tokio_core;

@@ -54,9 +54,8 @@ where
 
         if let Some(processor) = self.process_map().get(&name) {
             match processor.process(&mut ctx, iprot, oprot) {
-                // TODO: Find a proper logging library
-                Err(thrift::Error::User(err)) => println!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
-                Err(err) => println!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
+                Err(thrift::Error::User(err)) => error!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
+                Err(err) => error!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
                 _ => (),
             };
 
@@ -64,8 +63,7 @@ where
             return Ok(());
         }
 
-        // TODO: Find a proper logging library
-        println!(
+        error!(
             "frugal: client invoked unknown function {} on request with correlation id {}",
             &name,
             ctx.correlation_id()
@@ -118,9 +116,9 @@ mod test {
     impl FProcessorFunction for MockProcessorFunction {
         fn process(
             &self,
-            ctx: &mut FContext,
-            iprot: &mut FInputProtocol,
-            oprot: &mut FOutputProtocol,
+            _: &mut FContext,
+            _: &mut FInputProtocol,
+            _: &mut FOutputProtocol,
         ) -> thrift::Result<()> {
             Ok(())
         }
@@ -170,9 +168,9 @@ mod test {
         impl FProcessorFunction for ErrorMockProcessorFunction {
             fn process(
                 &self,
-                ctx: &mut FContext,
-                iprot: &mut FInputProtocol,
-                oprot: &mut FOutputProtocol,
+                _: &mut FContext,
+                _: &mut FInputProtocol,
+                _: &mut FOutputProtocol,
             ) -> thrift::Result<()> {
                 Err(thrift::new_application_error(
                     thrift::ApplicationErrorKind::Unknown,

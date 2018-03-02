@@ -12,6 +12,8 @@ use frugal::processor::FProcessor;
 use frugal::protocol::{FInputProtocol, FInputProtocolFactory, FOutputProtocol};
 use frugal::transport::http::FHttpService;
 
+// TODO: Consider moving this to its own crate with own Cargo.toml
+
 struct MockProcessor;
 impl FProcessor for MockProcessor {
     fn process(&self, _: &mut FInputProtocol, oprot: &mut FOutputProtocol) -> thrift::Result<()> {

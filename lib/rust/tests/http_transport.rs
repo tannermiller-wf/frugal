@@ -3,7 +3,6 @@ extern crate frugal;
 extern crate futures;
 #[macro_use]
 extern crate hyper;
-extern crate pretty_env_logger;
 extern crate thrift;
 extern crate tokio_core;
 
@@ -60,8 +59,6 @@ static ADDRESS: &'static str = "127.0.0.1:1234";
 
 #[test]
 fn test_http_request_headers_with_context() {
-    pretty_env_logger::init();
-
     let request_bytes = "Hello from the other side".as_bytes();
     let framed_request_bytes = prepend_frame_size(request_bytes);
 

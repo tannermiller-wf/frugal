@@ -1,7 +1,6 @@
 extern crate byteorder;
 extern crate frugal;
 extern crate hyper;
-extern crate pretty_env_logger;
 extern crate tokio_core;
 
 use byteorder::{BigEndian, WriteBytesExt};
@@ -11,6 +10,8 @@ use tokio_core::reactor::Core;
 use frugal::context::FContext;
 use frugal::transport::FTransport;
 use frugal::transport::http::FHttpTransportBuilder;
+
+// TODO: Consider moving this to its own crate with own Cargo.toml
 
 fn prepend_frame_size(bs: &[u8]) -> Vec<u8> {
     let mut frame = Vec::new();
