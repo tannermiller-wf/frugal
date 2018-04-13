@@ -25,6 +25,7 @@ import (
 	"github.com/Workiva/frugal/compiler/generator/html"
 	"github.com/Workiva/frugal/compiler/generator/java"
 	"github.com/Workiva/frugal/compiler/generator/python"
+	"github.com/Workiva/frugal/compiler/generator/rust"
 	"github.com/Workiva/frugal/compiler/globals"
 	"github.com/Workiva/frugal/compiler/parser"
 )
@@ -163,6 +164,8 @@ func getProgramGenerator(lang string, options map[string]string) (generator.Prog
 		g = generator.NewProgramGenerator(python.NewGenerator(options), true)
 	case "html":
 		g = html.NewGenerator(options)
+	case "rust":
+		g = generator.NewProgramGenerator(rust.NewGenerator(options), false)
 	default:
 		return nil, fmt.Errorf("Invalid gen value %s", lang)
 	}
