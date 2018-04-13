@@ -26,45 +26,82 @@ import (
 )
 
 const (
-	lang                    = "rs"
-	defaultOutputDir        = "gen-rs"
-	serviceSuffix           = "_service"
-	scopeSuffix             = "_scope"
-	libFileName             = "lib"
-	packageTypeOption       = "package_type"
-	packageTypeOptionCrate  = "crate"
-	packageTypeOptionModule = "module"
+	lang             = "rs"
+	defaultOutputDir = "gen-rs"
+	serviceSuffix    = "_service"
+	scopeSuffix      = "_scope"
+
+	packageTypeOption = "package_type"
 )
+
+type packageType string
+
+const (
+	packageTypeCrate  = "crate"
+	packageTypeModule = "module"
+)
+
+func newPackageType(p string) packageType {
+	switch p {
+	case string(packageTypeModule):
+		return packageTypeModule
+	default:
+		return packageTypeCrate
+	}
+}
+
+func (p packageType) fileName() string {
+	switch p {
+	case packageTypeModule:
+		return "mod"
+	default:
+		return "lib"
+	}
+}
+
+func (p packageType) outputDir(outputDir string) string {
+	switch p {
+	case packageTypeModule:
+		return outputDir
+	default:
+		return outputDir + "/src"
+	}
+}
+
+func (p packageType) generateCargoTOML() bool {
+	switch p {
+	case packageTypeModule:
+		return false
+	default:
+		return true
+	}
+}
 
 type Generator struct {
 	*generator.BaseGenerator
-	libFile *os.File
+	rootFile    *os.File
+	packageType packageType
 }
 
 func NewGenerator(options map[string]string) generator.LanguageGenerator {
-	return &Generator{&generator.BaseGenerator{Options: options}, nil}
+	return &Generator{
+		BaseGenerator: &generator.BaseGenerator{Options: options},
+		rootFile:      nil,
+		packageType:   newPackageType(options[packageTypeOption]),
+	}
 }
 
 func (g *Generator) SetupGenerator(outputDir string) error {
-	if packageType, ok := g.Options[packageTypeOption]; ok {
-		switch packageType {
-		case packageTypeOptionCrate:
-
-		case packageTypeOptionModule:
-
-		default:
-			return fmt.Errorf("Bad package_type: %s", packageType)
-		}
-	}
-	libFile, err := g.CreateFile(libFileName, outputDir+"/src", lang, false)
+	rootFile, err := g.CreateFile(
+		g.packageType.fileName(), g.packageType.outputDir(outputDir), lang, false)
 	if err != nil {
 		return err
 	}
-	g.libFile = libFile
-	if err = g.GenerateDocStringComment(g.libFile); err != nil {
+	g.rootFile = rootFile
+	if err = g.GenerateDocStringComment(g.rootFile); err != nil {
 		return err
 	}
-	if err = g.GenerateNewline(g.libFile, 2); err != nil {
+	if err = g.GenerateNewline(g.rootFile, 2); err != nil {
 		return err
 	}
 	// TODO: externs go here
@@ -72,8 +109,8 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 }
 
 func (g *Generator) TeardownGenerator() error {
-	defer g.libFile.Close()
-	return g.PostProcess(g.libFile)
+	defer g.rootFile.Close()
+	return g.PostProcess(g.rootFile)
 }
 
 func (g *Generator) GetOutputDir(dir string) string {
@@ -97,6 +134,10 @@ func (g *Generator) PostProcess(f *os.File) error {
 }
 
 func (g *Generator) GenerateDependencies(dir string) error {
+	if !g.packageType.generateCargoTOML() {
+		return nil
+	}
+
 	cargoFile, err := g.CreateFile("Cargo", dir, "toml", false)
 	if err != nil {
 		return err
@@ -112,9 +153,9 @@ version = %q
 func (g *Generator) GenerateFile(name, outputDir string, fileType generator.FileType) (*os.File, error) {
 	switch fileType {
 	case generator.CombinedServiceFile:
-		return g.CreateFile(strings.ToLower(name)+serviceSuffix, outputDir+"/src", lang, false)
+		return g.CreateFile(strings.ToLower(name)+serviceSuffix, g.packageType.outputDir(outputDir), lang, false)
 	case generator.CombinedScopeFile:
-		return g.CreateFile(strings.ToLower(name)+scopeSuffix, outputDir+"/src", lang, false)
+		return g.CreateFile(strings.ToLower(name)+scopeSuffix, g.packageType.outputDir(outputDir), lang, false)
 	default:
 		return nil, fmt.Errorf("Bad file type for rust generator: %s", fileType)
 	}
@@ -168,7 +209,7 @@ func (g *Generator) GenerateConstantsContents(constants []*parser.Constant) erro
 			buffer.WriteString(fmt.Sprintf("pub const %s: %s = %v;\n\n", constant.Name, t, constant.Value))
 		}
 	}
-	g.libFile.Write(buffer.Bytes())
+	g.rootFile.Write(buffer.Bytes())
 	return nil
 }
 
