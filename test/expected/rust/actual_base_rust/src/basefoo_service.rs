@@ -4,5 +4,5 @@
 use super::*;
 
 pub trait FBaseFoo {
-    fn basePing(ctx: FContext) -> thrift::Result<()>;
+    fn base_ping(ctx: FContext) -> thrift::Result<()>;
 }

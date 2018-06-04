@@ -4,7 +4,7 @@
 pub const const_i32_from_base: i32 = 582;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum Base_health_condition {
+pub enum BaseHealthCondition {
     PASS = 1,
     WARN = 2,
     FAIL = 3,
@@ -31,27 +31,27 @@ impl Thing {
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Nested_thing {
+pub struct NestedThing {
     pub things: Option<Vec<Thing>>,
 }
 
-impl Nested_thing {
-    pub fn new<F0>(things: F0) -> Nested_thing
+impl NestedThing {
+    pub fn new<F0>(things: F0) -> NestedThing
     where
         F0: Into<Option<Vec<Thing>>>,
     {
-        Nested_thing {
+        NestedThing {
             things: things.into(),
         }
     }
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub struct Api_exception {}
+pub struct ApiException {}
 
-impl Api_exception {
-    pub fn new() -> Api_exception {
-        Api_exception {}
+impl ApiException {
+    pub fn new() -> ApiException {
+        ApiException {}
     }
 }
 

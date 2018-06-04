@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/Workiva/frugal/compiler/generator"
 	"github.com/Workiva/frugal/compiler/globals"
@@ -255,10 +256,29 @@ func (g *Generator) GenerateConstantsContents(constants []*parser.Constant) erro
 	return err
 }
 
+// typeName takes a string and converts it to Upper Camelcase
+func typeName(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+
+	var buffer bytes.Buffer
+
+	words := strings.Split(s, "_")
+
+	for _, word := range words {
+		w := []rune(word)
+		w[0] = unicode.ToUpper(w[0])
+		buffer.WriteString(string(w))
+	}
+
+	return buffer.String()
+}
+
 func (g *Generator) GenerateTypeDef(typedef *parser.TypeDef) error {
 	var buffer bytes.Buffer
 	g.writeDocComment(buffer, typedef.Comment)
-	buffer.WriteString(fmt.Sprintf("pub type %s = %s;\n\n", strings.Title(typedef.Name), g.toRustType(typedef.Type)))
+	buffer.WriteString(fmt.Sprintf("pub type %s = %s;\n\n", typeName(typedef.Name), g.toRustType(typedef.Type)))
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
 }
@@ -266,7 +286,7 @@ func (g *Generator) GenerateTypeDef(typedef *parser.TypeDef) error {
 func (g *Generator) GenerateEnum(enum *parser.Enum) error {
 	var buffer bytes.Buffer
 	g.writeDocComment(buffer, enum.Comment)
-	eName := strings.Title(enum.Name)
+	eName := typeName(enum.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub enum %s{\n", eName))
 	for _, v := range enum.Values {
@@ -301,7 +321,7 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 
 	// write the struct def itself
 	g.writeDocComment(buffer, s.Comment)
-	sName := strings.Title(s.Name)
+	sName := typeName(s.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
 	typeParams := make([]string, 0, len(s.Fields))
@@ -366,13 +386,51 @@ func (g *Generator) GeneratePublisher(file *os.File, scope *parser.Scope) error 
 
 func (g *Generator) GenerateSubscriber(file *os.File, scope *parser.Scope) error { return nil }
 
+// methodName takes a methodname, typically in lowerCamelCase and converts it to snake_case
+func methodName(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+
+	runes := []rune(s)
+	i := 1
+	var buffer bytes.Buffer
+	buffer.WriteRune(unicode.ToLower(runes[0]))
+	addedUnderscore := false
+	for i < len(runes) {
+		if unicode.IsLower(runes[i]) {
+			buffer.WriteRune(runes[i])
+			if i+1 < len(runes) {
+				if unicode.IsUpper(runes[i+1]) {
+					buffer.WriteRune('_')
+					addedUnderscore = true
+				}
+			}
+			i++
+			continue
+		}
+
+		if i+1 < len(runes) {
+			if unicode.IsLower(runes[i+1]) && !addedUnderscore {
+				buffer.WriteRune('_')
+			}
+		}
+		addedUnderscore = false
+
+		buffer.WriteRune(unicode.ToLower(runes[i]))
+		i++
+	}
+	return buffer.String()
+}
+
 func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	var buffer bytes.Buffer
 
 	// write the service trait
 	g.writeDocComment(buffer, s.Comment)
 	extends := strings.Replace(s.Extends, ".", "::", -1)
-	buffer.WriteString(fmt.Sprintf("pub trait F%s%s {\n", strings.Title(s.Name), extends))
+	sName := typeName(s.Name)
+	buffer.WriteString(fmt.Sprintf("pub trait F%s%s {\n", sName, extends))
 	for _, method := range s.Methods {
 		g.writeDocComment(buffer, method.Comment)
 
@@ -385,7 +443,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			args = append(args, fmt.Sprintf("%s: %s", f.Name, t))
 		}
 
-		buffer.WriteString(fmt.Sprintf("fn %s(ctx: FContext, %s) -> thrift::Result<%s>;\n", method.Name, commaSpaceJoin(args), g.toRustType(method.ReturnType)))
+		buffer.WriteString(fmt.Sprintf("fn %s(ctx: FContext, %s) -> thrift::Result<%s>;\n", methodName(method.Name), commaSpaceJoin(args), g.toRustType(method.ReturnType)))
 	}
 	buffer.WriteString("}\n")
 
@@ -430,6 +488,7 @@ func (g *Generator) toRustType(t *parser.Type) string {
 			g.toRustType(t.ValueType))
 	default:
 		// Custom type, either typedef or struct.
+		// TODO: How to handle this type name?
 		name := strings.Title(t.Name)
 		if strings.Contains(name, ".") {
 			name = strings.Replace(name, ".", "::", -1)
