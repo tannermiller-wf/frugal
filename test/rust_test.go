@@ -23,8 +23,7 @@ import (
 
 func TestValidRustFrugalCompiler(t *testing.T) {
 	options := compiler.Options{
-		//File:    frugalGenFile,
-		File:    "idl/base.frugal",
+		File:    frugalGenFile,
 		Gen:     "rust",
 		Out:     outputDir,
 		Delim:   delim,
@@ -39,7 +38,7 @@ func TestValidRustFrugalCompiler(t *testing.T) {
 		{"expected/rust/actual_base_rust/src/lib.rs", filepath.Join(outputDir, "actual_base_rust", "src", "lib.rs")},
 		{"expected/rust/actual_base_rust/src/basefoo_service.rs", filepath.Join(outputDir, "actual_base_rust", "src", "basefoo_service.rs")},
 
-		//{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
+		{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
 	}
 	copyAllFiles(t, files)
 	compareAllFiles(t, files)

@@ -215,17 +215,41 @@ func (g *Generator) GenerateScopePackage(_ *os.File, s *parser.Scope) error {
 }
 
 func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}) string {
-	switch v := value.(type) {
-	case string, parser.Identifier:
-		return fmt.Sprintf("%q", v)
-	case []parser.KeyValue:
-		var buffer bytes.Buffer
-		//for _, kv := range v {
+	//switch v := value.(type) {
+	//case string, parser.Identifier:
+	//	return fmt.Sprintf("%q", v)
+	//case []parser.KeyValue:
+	//	var buffer bytes.Buffer
+	//	for _, kv := range v {
+	//
+	//	}
+	//	return buffer.String()
+	//default:
+	//	return fmt.Sprintf("%v", v)
+	//}
 
-		//}
-		return buffer.String()
-	default:
-		return fmt.Sprintf("%v", v)
+	if identifier, ok := value.(parser.Identifier); ok {
+		idCtx := g.Frugal.ContextFromIdentifier(identifier)
+		switch idCtx.Type {
+		case parser.LocalConstant:
+			return title(idCtx.Constant.Name)
+		case parser.LocalEnum:
+			return fmt.Sprintf("%s::%s", title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+		case parser.IncludeConstant:
+			include := idCtx.Include.Name
+			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
+				include = namespace.Value
+			}
+			return fmt.Sprintf("%s::%s", includeNameToReference(include), title(idCtx.Constant.Name))
+		case parser.IncludeEnum:
+			include := idCtx.Include.Name
+			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
+				include = namespace.Value
+			}
+			return fmt.Sprintf("%s.%s_%s", includeNameToReference(include), title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+		default:
+			panic(fmt.Sprintf("The Identifier %s has unexpected type %d", identifier, idCtx.Type))
+		}
 	}
 }
 
@@ -428,8 +452,11 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 
 	// write the service trait
 	g.writeDocComment(buffer, s.Comment)
-	extends := strings.Replace(s.Extends, ".", "::", -1)
 	sName := typeName(s.Name)
+	extends := ""
+	if s.Extends != "" {
+		extends = fmt.Sprintf(": %s ", strings.Replace(s.Extends, ".", "::", -1))
+	}
 	buffer.WriteString(fmt.Sprintf("pub trait F%s%s {\n", sName, extends))
 	for _, method := range s.Methods {
 		g.writeDocComment(buffer, method.Comment)
@@ -453,6 +480,18 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 
 	_, err := file.Write(buffer.Bytes())
 	return err
+}
+
+func title(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	if s == strings.ToUpper(s) {
+		return s
+	}
+
+	return strings.Title(s)
 }
 
 func (g *Generator) toRustType(t *parser.Type) string {
@@ -489,7 +528,7 @@ func (g *Generator) toRustType(t *parser.Type) string {
 	default:
 		// Custom type, either typedef or struct.
 		// TODO: How to handle this type name?
-		name := strings.Title(t.Name)
+		name := title(t.Name)
 		if strings.Contains(name, ".") {
 			name = strings.Replace(name, ".", "::", -1)
 		}
