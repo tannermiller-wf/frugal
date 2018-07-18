@@ -4,18 +4,18 @@ use std::str::from_utf8 as str_from_utf8;
 use base64;
 use futures::future::{Either, Future};
 use futures::stream::Stream;
-use hyper::{Body, Method, StatusCode, Uri};
 use hyper::client::{Client, HttpConnector};
 use hyper::header::{qitem, Accept, ContentLength, ContentType, Headers};
 use hyper::server::Request;
+use hyper::{Body, Method, StatusCode, Uri};
 use thrift;
 use thrift::transport::{TBufferedReadTransportFactory, TReadTransport, TReadTransportFactory};
 use tokio_core::reactor::{Core, Timeout};
 
+use super::*;
 use context::FContext;
 use transport::FTransport;
 use util::read_size;
-use super::*;
 
 pub struct FHttpTransportBuilder {
     core: Core,
@@ -30,9 +30,9 @@ pub struct FHttpTransportBuilder {
 impl FHttpTransportBuilder {
     pub fn new(client: Client<HttpConnector, Body>, core: Core, url: Uri) -> Self {
         FHttpTransportBuilder {
-            core: core,
-            client: client,
-            url: url,
+            core,
+            client,
+            url,
             request_size_limit: None,
             response_size_limit: None,
             request_headers: None,
@@ -259,8 +259,9 @@ impl FTransport for FHttpTransport {
             return None;
         }
 
-        Some(Ok(TBufferedReadTransportFactory::new()
-            .create(Box::new(body_cursor))))
+        Some(Ok(
+            TBufferedReadTransportFactory::new().create(Box::new(body_cursor))
+        ))
     }
 
     fn get_request_size_limit(&self) -> Option<usize> {

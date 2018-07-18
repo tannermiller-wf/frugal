@@ -8,8 +8,8 @@ use hyper::Client;
 use tokio_core::reactor::Core;
 
 use frugal::context::FContext;
-use frugal::transport::FTransport;
 use frugal::transport::http::FHttpTransportBuilder;
+use frugal::transport::FTransport;
 
 // TODO: Consider moving this to its own crate with own Cargo.toml
 
@@ -21,7 +21,7 @@ fn prepend_frame_size(bs: &[u8]) -> Vec<u8> {
 }
 
 fn main() {
-    let request_bytes = "Hello from the other side".as_bytes();
+    let request_bytes = b"Hello from the other side";
     let framed_request_bytes = prepend_frame_size(request_bytes);
 
     let core = Core::new().unwrap();
@@ -34,12 +34,12 @@ fn main() {
     let fctx = FContext::new(None);
 
     println!("starting real request");
-    let mut foo = "".to_string();
+    let mut payload = "".to_string();
     transport
         .request(&fctx, &framed_request_bytes)
         .unwrap()
         .unwrap()
-        .read_to_string(&mut foo)
+        .read_to_string(&mut payload)
         .unwrap();
-    println!("{}", &foo);
+    println!("{}", &payload);
 }

@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 
 use byteorder::{BigEndian, WriteBytesExt};
 use thrift;
-use thrift::protocol::{TInputProtocol, TInputProtocolFactory, TOutputProtocol,
-                       TOutputProtocolFactory};
+use thrift::protocol::{
+    TInputProtocol, TInputProtocolFactory, TOutputProtocol, TOutputProtocolFactory,
+};
 use thrift::transport::{TReadTransport, TWriteTransport};
 
 use context::{self, FContext};
@@ -140,9 +141,9 @@ impl ProtocolMarshaler {
                 // Write headers
                 for (k, v) in headers.iter() {
                     buf.write_u32::<BigEndian>(k.len() as u32)?;
-                    buf.write(k.as_bytes())?;
+                    buf.write_all(k.as_bytes())?;
                     buf.write_u32::<BigEndian>(v.len() as u32)?;
-                    buf.write(v.as_bytes())?;
+                    buf.write_all(v.as_bytes())?;
                 }
 
                 Ok(buf)
@@ -163,19 +164,19 @@ impl FInputProtocol {
             .and_then(|marshaler| marshaler.unmarshal_headers(&mut self.transport))?;
 
         let mut ctx = FContext::new(None);
-        for (k, v) in headers.iter() {
+        for (k, v) in &headers {
             // the new fcontext will have a new op id so don't copy the old one
             if k != context::OP_ID_HEADER {
                 ctx.add_request_header(k.clone(), v.clone());
             }
         }
 
-        let op_id = headers
-            .get(context::OP_ID_HEADER)
-            .ok_or(thrift::new_protocol_error(
+        let op_id = headers.get(context::OP_ID_HEADER).ok_or_else(|| {
+            thrift::new_protocol_error(
                 thrift::ProtocolErrorKind::InvalidData,
                 "frugal: request missing op id",
-            ))?;
+            )
+        })?;
         ctx.add_response_header(context::OP_ID_HEADER, op_id);
 
         if let Some(cid) = headers.get(context::CID_HEADER) {
@@ -190,7 +191,7 @@ impl FInputProtocol {
             .and_then(|buf| ProtocolMarshaler::get(buf[0]))
             .and_then(|marshaler| marshaler.unmarshal_headers(&mut self.transport))?;
 
-        for (k, v) in headers.iter() {
+        for (k, v) in &headers {
             if k != context::OP_ID_HEADER {
                 ctx.add_response_header(k.clone(), v.clone());
             }
@@ -517,7 +518,7 @@ mod test {
     use context::{FContext, CID_HEADER, OP_ID_HEADER};
 
     static BASIC_FRAME: &'static [u8] = &[
-        0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114
+        0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114,
     ];
     static FRUGAL_FRAME: &'static [u8] = &[
         0, 0, 0, 0, 65, 0, 0, 0, 5, 104, 101, 108, 108, 111, 0, 0, 0, 5, 119, 111, 114, 108, 100,
