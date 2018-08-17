@@ -97,6 +97,10 @@ func NewGenerator(options map[string]string) generator.LanguageGenerator {
 	}
 }
 
+func (g *Generator) UseVendor() bool {
+	return false
+}
+
 func (g *Generator) SetupGenerator(outputDir string) error {
 	rootFile, err := g.CreateFile(
 		g.packageType.fileName(), g.packageType.outputDir(outputDir), lang, false)
@@ -214,6 +218,13 @@ func (g *Generator) GenerateScopePackage(_ *os.File, s *parser.Scope) error {
 	return err
 }
 
+func includeNameToReference(includeName string) string {
+	split := strings.FieldsFunc(includeName, func(r rune) bool {
+		return r == '.' || r == '/'
+	})
+	return split[len(split)-1]
+}
+
 func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}) string {
 	//switch v := value.(type) {
 	//case string, parser.Identifier:
@@ -251,6 +262,8 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}) strin
 			panic(fmt.Sprintf("The Identifier %s has unexpected type %d", identifier, idCtx.Type))
 		}
 	}
+
+	return ""
 }
 
 func (g *Generator) writeDocComment(buffer bytes.Buffer, comments []string) {
