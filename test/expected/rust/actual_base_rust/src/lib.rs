@@ -5,10 +5,10 @@ pub const CONST_I32_FROM_BASE: i32 = 582;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum BaseHealthCondition {
-    PASS = 1,
-    WARN = 2,
-    FAIL = 3,
-    UNKNOWN = 4,
+    Pass = 1,
+    Warn = 2,
+    Fail = 3,
+    Unknown = 4,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

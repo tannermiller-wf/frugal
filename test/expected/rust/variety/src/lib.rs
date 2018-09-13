@@ -3,13 +3,137 @@
 
 pub const REDEF_CONST: i32 = rust::CONST_I32_FROM_BASE;
 
-pub const CONST_THING: rust::Thing = rust::Thing {
-    an_id: 1,
-    a_string: "some string".into(),
-};
+lazy_static! {
+    pub static ref CONST_THING: rust::Thing = rust::Thing {
+        an_id: Some(1),
+        a_string: Some("some string".into()),
+    };
+}
 
 pub const DEFAULT_ID: Id = -1;
 
 pub const OTHER_DEFAULT: Id = DEFAULT_ID;
 
 pub const THIRTYFOUR: i8 = 34;
+
+lazy_static! {
+    pub static ref MAPCONSTANT: BTreeMap<String, String> = {
+        let mut m = BTreeMap::new();
+        m.insert("hello".into(), "world".into());
+        m.insert("goodnight".into(), "moon".into());
+        m
+    };
+}
+
+lazy_static! {
+    pub static ref CONSTEVENT1: Event = Event {
+        id: Some(-2),
+        message: Some("first one".into()),
+    };
+}
+
+lazy_static! {
+    pub static ref CONSTEVENT2: Event = Event {
+        id: Some(-7),
+        message: Some("second one".into()),
+    };
+}
+
+lazy_static! {
+    pub static ref NUMSLIST: Vec<i32> = vec![2, 4, 7, 1];
+}
+
+lazy_static! {
+    pub static ref NUMSSET: BTreeSet<Int> = {
+        let mut s = BTreeSet::new();
+        s.insert(1);
+        s.insert(3);
+        s.insert(8);
+        s.insert(0);
+        s
+    };
+}
+
+lazy_static! {
+    pub static ref MAPCONSTANT2: BTreeMap<String, Event> = {
+        let mut m = BTreeMap::new();
+        m.insert(
+            "hello".into(),
+            Event {
+                id: Some(-2),
+                message: Some("first here".into()),
+            },
+        );
+        m
+    };
+}
+
+lazy_static! {
+    pub static ref BIN_CONST: Vec<u8> = b"hello".to_vec();
+}
+
+pub const TRUE_CONSTANT: bool = true;
+
+pub const FALSE_CONSTANT: bool = false;
+
+lazy_static! {
+    pub static ref CONST_HC: HealthCondition = HealthCondition::Warn;
+}
+
+lazy_static! {
+    pub static ref EVIL_STRING: String = "thin'g\" \"".into();
+}
+
+lazy_static! {
+    pub static ref EVIL_STRING2: String = "th'ing\"ad\"f".into();
+}
+
+lazy_static! {
+    pub static ref CONST_LOWER: TestLowercase = TestLowercase {
+        lowercaseint: Some(2),
+    };
+}
+
+pub type Id = i64;
+
+pub type Int = i32;
+
+pub type Request = BTreeMap<Int, String>;
+
+pub type T1String = String;
+
+pub type T2String = T1String;
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum HealthCondition {
+    Pass = 1,
+    Warn = 2,
+    Fail = 3,
+    Unknown = 4,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum ItsAnEnum {
+    First = 2,
+    Second = 3,
+    Third = 4,
+    Fourth = 5,
+    Fifth = 6,
+    Sixith = 7,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct TestBase {
+    pub base_struct: rust::Thing,
+}
+
+impl TestBase {
+    pub fn new<F0>(base_struct: F0) -> TestBase
+    where
+        F0: Into<rust::Thing>,
+    {
+        TestBase {
+            base_struct: base_struct.into(),
+        }
+    }
+}

@@ -225,105 +225,115 @@ func includeNameToReference(includeName string) string {
 	return split[len(split)-1]
 }
 
-func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}) string {
+func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optional bool) string {
+	var name string
 	if identifier, ok := value.(parser.Identifier); ok {
 		idCtx := g.Frugal.ContextFromIdentifier(identifier)
 		switch idCtx.Type {
 		case parser.LocalConstant:
-			return strings.ToUpper(idCtx.Constant.Name)
+			name = strings.ToUpper(idCtx.Constant.Name)
 		case parser.LocalEnum:
-			return fmt.Sprintf("%s::%s", title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+			name = fmt.Sprintf("%s::%s", title(idCtx.Enum.Name), idCtx.EnumValue.Name)
 		case parser.IncludeConstant:
 			include := idCtx.Include.Name
 			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
 				include = namespace.Value
 			}
-			return fmt.Sprintf("%s::%s", includeNameToReference(include), strings.ToUpper(idCtx.Constant.Name))
+			name = fmt.Sprintf("%s::%s", includeNameToReference(include), strings.ToUpper(idCtx.Constant.Name))
 		case parser.IncludeEnum:
 			include := idCtx.Include.Name
 			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
 				include = namespace.Value
 			}
-			return fmt.Sprintf("%s.%s_%s", includeNameToReference(include), title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+			name = fmt.Sprintf("%s.%s_%s", includeNameToReference(include), title(idCtx.Enum.Name), idCtx.EnumValue.Name)
 		default:
 			panic(fmt.Sprintf("The Identifier %s has unexpected type %d", identifier, idCtx.Type))
 		}
-	}
-
-	underlyingType := g.Frugal.UnderlyingType(t)
-	if underlyingType.IsPrimitive() || underlyingType.IsContainer() {
-		switch underlyingType.Name {
-		case "bool", "i8", "byte", "i16", "i32", "i64", "double":
-			return fmt.Sprintf("%v", value)
-		case "string":
-			return fmt.Sprintf("%q.into()", value.(string))
-		case "binary":
-			return fmt.Sprintf("b%q.into()", value)
-		case "list":
-			var buffer bytes.Buffer
-			buffer.WriteString("vec![\n")
-			for _, v := range value.([]interface{}) {
-				buffer.WriteString(fmt.Sprintf("%s,\n", g.generateRustLiteral(underlyingType.ValueType, v)))
+	} else {
+		underlyingType := g.Frugal.UnderlyingType(t)
+		if underlyingType.IsPrimitive() || underlyingType.IsContainer() {
+			switch underlyingType.Name {
+			case "bool", "i8", "byte", "i16", "i32", "i64", "double":
+				name = fmt.Sprintf("%v", value)
+			case "string":
+				name = fmt.Sprintf("%q.into()", value.(string))
+			case "binary":
+				name = fmt.Sprintf("b%q.to_vec()", value)
+			case "list":
+				var buffer bytes.Buffer
+				buffer.WriteString("vec![\n")
+				for _, v := range value.([]interface{}) {
+					buffer.WriteString(fmt.Sprintf("%s,\n", g.generateRustLiteral(underlyingType.ValueType, v, false)))
+				}
+				buffer.WriteString("]")
+				name = buffer.String()
+			case "set":
+				var buffer bytes.Buffer
+				buffer.WriteString(fmt.Sprintf("{\nlet mut s = BTreeSet::new();\n"))
+				for _, v := range value.([]interface{}) {
+					buffer.WriteString(fmt.Sprintf("s.insert(%s);\n", g.generateRustLiteral(underlyingType.ValueType, v, false)))
+				}
+				buffer.WriteString("s\n}")
+				name = buffer.String()
+			case "map":
+				var buffer bytes.Buffer
+				buffer.WriteString(fmt.Sprintf("{\nlet mut m = BTreeMap::new();\n"))
+				for _, pair := range value.([]parser.KeyValue) {
+					key := g.generateRustLiteral(underlyingType.KeyType, pair.Key, false)
+					val := g.generateRustLiteral(underlyingType.ValueType, pair.Value, false)
+					buffer.WriteString(fmt.Sprintf("m.insert(%s, %s);\n", key, val))
+				}
+				buffer.WriteString("m\n}")
+				name = buffer.String()
 			}
-			buffer.WriteString("]")
-			return buffer.String()
-		case "set":
-			var buffer bytes.Buffer
-			buffer.WriteString(fmt.Sprintf("{\nlet mut set = BTreeSet::new();\n"))
-			for _, v := range value.([]interface{}) {
-				buffer.WriteString(fmt.Sprintf("set.insert(%s);\n", g.generateRustLiteral(underlyingType.ValueType, v)))
+		} else if g.Frugal.IsEnum(underlyingType) {
+			e := g.Frugal.FindEnum(underlyingType)
+			if e == nil {
+				panic("no enum for type " + underlyingType.Name)
 			}
-			buffer.WriteString("set\n}")
-			return buffer.String()
-		case "map":
-			var buffer bytes.Buffer
-			buffer.WriteString(fmt.Sprintf("{\nlet mut map = BTreeMap::new();\n"))
-			for _, pair := range value.([]parser.KeyValue) {
-				key := g.generateRustLiteral(underlyingType.KeyType, pair.Key)
-				val := g.generateRustLiteral(underlyingType.ValueType, pair.Value)
-				buffer.WriteString(fmt.Sprintf("map.insert(%s, %s);\n", key, val))
-			}
-			buffer.WriteString("map\n}")
-			return buffer.String()
-		}
-	} else if g.Frugal.IsEnum(underlyingType) {
-		e := g.Frugal.FindEnum(underlyingType)
-		if e == nil {
-			panic("no enum for type " + underlyingType.Name)
-		}
-		for _, ev := range e.Values {
 			vi, ok := value.(int64)
 			if !ok {
 				panic(fmt.Sprintf("Enum value %v is not an int64", value))
 			}
-			if ev.Value == int(vi) {
-				return fmt.Sprintf("%s::%s", g.toRustType(underlyingType), ev.Name)
-			}
-		}
-		panic(fmt.Sprintf("no enum value %v for type %s", value, underlyingType.Name))
-	} else if g.Frugal.IsStruct(underlyingType) {
-		s := g.Frugal.FindStruct(underlyingType)
-		if s == nil {
-			panic("no struct for type " + underlyingType.Name)
-		}
-
-		var buffer bytes.Buffer
-		buffer.WriteString(fmt.Sprintf("%s{\n", g.toRustType(underlyingType)))
-
-		for _, pair := range value.([]parser.KeyValue) {
-			for _, field := range s.Fields {
-				if pair.KeyToString() == field.Name {
-					val := g.generateRustLiteral(field.Type, pair.Value)
-					buffer.WriteString(fmt.Sprintf("%s: %s,\n", pair.KeyToString(), val))
+			for _, ev := range e.Values {
+				if ev.Value == int(vi) {
+					name = fmt.Sprintf("%s::%s", g.toRustType(underlyingType, false), title(strings.ToLower(ev.Name)))
+					break
 				}
 			}
-		}
+			if name == "" {
+				panic(fmt.Sprintf("no enum value %v for type %s", value, underlyingType.Name))
+			}
+		} else if g.Frugal.IsStruct(underlyingType) {
+			s := g.Frugal.FindStruct(underlyingType)
+			if s == nil {
+				panic("no struct for type " + underlyingType.Name)
+			}
 
-		buffer.WriteString("}")
-		return buffer.String()
+			var buffer bytes.Buffer
+			buffer.WriteString(fmt.Sprintf("%s{\n", g.toRustType(underlyingType, false)))
+
+			for _, pair := range value.([]parser.KeyValue) {
+				for _, field := range s.Fields {
+					if pair.KeyToString() == field.Name {
+						val := g.generateRustLiteral(field.Type, pair.Value, field.Modifier != parser.Required)
+						buffer.WriteString(fmt.Sprintf("%s: %s,\n", strings.ToLower(pair.KeyToString()), val))
+					}
+				}
+			}
+
+			buffer.WriteString("}")
+			name = buffer.String()
+		}
+		if name == "" {
+			panic("no entry for type " + underlyingType.Name)
+		}
 	}
 
-	panic("no entry for type " + underlyingType.Name)
+	if optional {
+		name = fmt.Sprintf("Some(%s)", name)
+	}
+	return name
 }
 
 func (g *Generator) writeDocComment(buffer bytes.Buffer, comments []string) {
@@ -339,8 +349,10 @@ func (g *Generator) GenerateConstantsContents(constants []*parser.Constant) erro
 		// pub const NAME: TYPE = VALUE;
 		// or
 		// pub static NAME: TYPE = VALUE: Are statics only needed for containers?
-		if !constant.Type.IsContainer() {
-			buffer.WriteString(fmt.Sprintf("pub const %s: %s = %v;\n\n", strings.ToUpper(constant.Name), g.toRustType(constant.Type), g.generateRustLiteral(constant.Type, constant.Value)))
+		if constant.Type.IsContainer() || g.Frugal.IsStruct(constant.Type) || g.Frugal.IsEnum(constant.Type) || constant.Type.Name == "binary" || constant.Type.Name == "string" {
+			buffer.WriteString(fmt.Sprintf("lazy_static! {\npub static ref %s: %s = %v;\n}\n\n", strings.ToUpper(constant.Name), g.toRustType(constant.Type, false), g.generateRustLiteral(constant.Type, constant.Value, false)))
+		} else {
+			buffer.WriteString(fmt.Sprintf("pub const %s: %s = %v;\n\n", strings.ToUpper(constant.Name), g.toRustType(constant.Type, false), g.generateRustLiteral(constant.Type, constant.Value, false)))
 		}
 	}
 	_, err := g.rootFile.Write(buffer.Bytes())
@@ -369,7 +381,7 @@ func typeName(s string) string {
 func (g *Generator) GenerateTypeDef(typedef *parser.TypeDef) error {
 	var buffer bytes.Buffer
 	g.writeDocComment(buffer, typedef.Comment)
-	buffer.WriteString(fmt.Sprintf("pub type %s = %s;\n\n", typeName(typedef.Name), g.toRustType(typedef.Type)))
+	buffer.WriteString(fmt.Sprintf("pub type %s = %s;\n\n", typeName(typedef.Name), g.toRustType(typedef.Type, false)))
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
 }
@@ -382,7 +394,7 @@ func (g *Generator) GenerateEnum(enum *parser.Enum) error {
 	buffer.WriteString(fmt.Sprintf("pub enum %s{\n", eName))
 	for _, v := range enum.Values {
 		g.writeDocComment(buffer, v.Comment)
-		buffer.WriteString(fmt.Sprintf("%s = %v,\n", v.Name, v.Value))
+		buffer.WriteString(fmt.Sprintf("%s = %v,\n", title(strings.ToLower(v.Name)), v.Value))
 	}
 	buffer.WriteString(fmt.Sprintf("}\n\n"))
 	_, err := g.rootFile.Write(buffer.Bytes())
@@ -420,16 +432,13 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	whereClause := make([]string, 0, len(s.Fields))
 	for i, f := range s.Fields {
 		g.writeDocComment(buffer, f.Comment)
-		t := g.toRustType(f.Type)
-		if f.Modifier != parser.Required {
-			t = fmt.Sprintf("Option<%s>", t)
-		}
+		t := g.toRustType(f.Type, f.Modifier != parser.Required)
 		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", f.Name, t))
 
 		// the following are needed in the impl block
 		fTypeParam := fmt.Sprintf("F%v", i)
 		typeParams = append(typeParams, fTypeParam)
-		args = append(args, fmt.Sprintf("%s: %s", f.Name, fTypeParam))
+		args = append(args, fmt.Sprintf("%s: %s", strings.ToLower(f.Name), fTypeParam))
 		whereClause = append(whereClause, fmt.Sprintf("%s: Into<%s>", fTypeParam, t))
 
 	}
@@ -530,14 +539,11 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 
 		args := make([]string, 0, len(method.Arguments))
 		for _, f := range method.Arguments {
-			t := g.toRustType(f.Type)
-			if f.Modifier != parser.Required {
-				t = fmt.Sprintf("Option<%s>", t)
-			}
+			t := g.toRustType(f.Type, f.Modifier != parser.Required)
 			args = append(args, fmt.Sprintf("%s: %s", f.Name, t))
 		}
 
-		buffer.WriteString(fmt.Sprintf("fn %s(ctx: FContext, %s) -> thrift::Result<%s>;\n", methodName(method.Name), commaSpaceJoin(args), g.toRustType(method.ReturnType)))
+		buffer.WriteString(fmt.Sprintf("fn %s(ctx: FContext, %s) -> thrift::Result<%s>;\n", methodName(method.Name), commaSpaceJoin(args), g.toRustType(method.ReturnType, false)))
 	}
 	buffer.WriteString("}\n")
 
@@ -561,38 +567,39 @@ func title(s string) string {
 	return strings.Title(s)
 }
 
-func (g *Generator) toRustType(t *parser.Type) string {
+func (g *Generator) toRustType(t *parser.Type, optional bool) string {
 	if t == nil {
 		return "()"
 	}
 
+	var name string
 	switch t.Name {
 	case "bool":
-		return "bool"
+		name = "bool"
 	case "byte":
-		return "u8"
+		name = "u8"
 	case "i8":
-		return "i8"
+		name = "i8"
 	case "i16":
-		return "i16"
+		name = "i16"
 	case "i32":
-		return "i32"
+		name = "i32"
 	case "i64":
-		return "i64"
+		name = "i64"
 	case "double":
-		return "OrderedFloat<f64>"
+		name = "OrderedFloat<f64>"
 	case "string":
-		return "String"
+		name = "String"
 	case "binary":
-		return "Vec<u8>"
+		name = "Vec<u8>"
 	case "list":
-		return fmt.Sprintf("Vec<%s>", g.toRustType(t.ValueType))
+		name = fmt.Sprintf("Vec<%s>", g.toRustType(t.ValueType, false))
 	case "set":
-		return fmt.Sprintf("BTreeSet<%s>", g.toRustType(t.ValueType))
+		name = fmt.Sprintf("BTreeSet<%s>", g.toRustType(t.ValueType, false))
 	case "map":
-		return fmt.Sprintf("BTreeMap<%s, %s>",
-			g.toRustType(t.KeyType),
-			g.toRustType(t.ValueType))
+		name = fmt.Sprintf("BTreeMap<%s, %s>",
+			g.toRustType(t.KeyType, false),
+			g.toRustType(t.ValueType, false))
 	}
 
 	if g.Frugal.IsEnum(t) {
@@ -600,7 +607,7 @@ func (g *Generator) toRustType(t *parser.Type) string {
 		if e == nil {
 			return title(e.Name)
 		}
-		name := title(e.Name)
+		name := typeName(e.Name)
 		if t.IncludeName() != "" {
 			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
 			if namespace != nil {
@@ -611,7 +618,7 @@ func (g *Generator) toRustType(t *parser.Type) string {
 	} else if g.Frugal.IsStruct(t) {
 		s := g.Frugal.FindStruct(t)
 		if s == nil {
-			return title(t.Name)
+			return typeName(t.Name)
 		}
 		name := title(s.Name)
 		if t.IncludeName() != "" {
@@ -623,9 +630,16 @@ func (g *Generator) toRustType(t *parser.Type) string {
 		return name
 	}
 
-	name := title(t.Name)
-	if strings.Contains(name, ".") {
-		name = strings.Replace(name, ".", "::", -1)
+	if name == "" {
+		name = typeName(t.Name)
+		if strings.Contains(name, ".") {
+			name = strings.Replace(name, ".", "::", -1)
+		}
 	}
+
+	if optional {
+		name = fmt.Sprintf("Option<%s>", name)
+	}
+
 	return name
 }
