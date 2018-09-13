@@ -676,6 +676,27 @@ func (f *Frugal) FindStruct(typ *Type) *Struct {
 	return nil
 }
 
+func (f *Frugal) FindEnum(typ *Type) *Enum {
+	frugal := f
+	includeName := typ.IncludeName()
+	paramName := typ.ParamName()
+	if includeName != "" {
+		frugalInclude, ok := f.ParsedIncludes[includeName]
+		if !ok {
+			return nil
+		}
+		frugal = frugalInclude
+	}
+
+	for _, e := range frugal.Enums {
+		if paramName == e.Name {
+			return e
+		}
+	}
+
+	return nil
+}
+
 // Include returns the Include with the given name.
 func (f *Frugal) Include(name string) *Include {
 	name = filepath.Base(name)

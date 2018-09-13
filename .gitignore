@@ -7,6 +7,8 @@ target/
 py3env
 .vscode
 
+lib/go/vendor/
+
 
 # Do not commit the following directories created by pub.
 .buildlog
