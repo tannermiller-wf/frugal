@@ -336,16 +336,25 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 	return name
 }
 
-func (g *Generator) writeDocComment(buffer bytes.Buffer, comments []string) {
+func (g *Generator) writeDocComment(buffer *bytes.Buffer, comments []string) {
 	for _, comment := range comments {
 		buffer.WriteString(fmt.Sprintf("/// %s\n", comment))
+	}
+}
+
+// Currently only deprecated is supported, all others are ignored
+func (g *Generator) writeAnnotations(buffer *bytes.Buffer, annotations parser.Annotations) {
+	if note, ok := annotations.Deprecated(); ok {
+		fmt.Println("got deprecated: ", note)
+		buffer.WriteString(fmt.Sprintf("#[deprecated(note = %q)]\n", note))
 	}
 }
 
 func (g *Generator) GenerateConstantsContents(constants []*parser.Constant) error {
 	var buffer bytes.Buffer
 	for _, constant := range constants {
-		g.writeDocComment(buffer, constant.Comment)
+		g.writeDocComment(&buffer, constant.Comment)
+		g.writeAnnotations(&buffer, constant.Annotations)
 		// pub const NAME: TYPE = VALUE;
 		// or
 		// pub static NAME: TYPE = VALUE: Are statics only needed for containers?
@@ -380,7 +389,8 @@ func typeName(s string) string {
 
 func (g *Generator) GenerateTypeDef(typedef *parser.TypeDef) error {
 	var buffer bytes.Buffer
-	g.writeDocComment(buffer, typedef.Comment)
+	g.writeDocComment(&buffer, typedef.Comment)
+	g.writeAnnotations(&buffer, typedef.Annotations)
 	buffer.WriteString(fmt.Sprintf("pub type %s = %s;\n\n", typeName(typedef.Name), g.toRustType(typedef.Type, false)))
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
@@ -388,12 +398,14 @@ func (g *Generator) GenerateTypeDef(typedef *parser.TypeDef) error {
 
 func (g *Generator) GenerateEnum(enum *parser.Enum) error {
 	var buffer bytes.Buffer
-	g.writeDocComment(buffer, enum.Comment)
+	g.writeDocComment(&buffer, enum.Comment)
+	g.writeAnnotations(&buffer, enum.Annotations)
 	eName := typeName(enum.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub enum %s{\n", eName))
 	for _, v := range enum.Values {
-		g.writeDocComment(buffer, v.Comment)
+		g.writeDocComment(&buffer, v.Comment)
+		g.writeAnnotations(&buffer, v.Annotations)
 		buffer.WriteString(fmt.Sprintf("%s = %v,\n", title(strings.ToLower(v.Name)), v.Value))
 	}
 	buffer.WriteString(fmt.Sprintf("}\n\n"))
@@ -423,7 +435,8 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	var buffer bytes.Buffer
 
 	// write the struct def itself
-	g.writeDocComment(buffer, s.Comment) // TODO: This doesn't seem to be working, see struct Event in the tests
+	g.writeDocComment(&buffer, s.Comment)
+	g.writeAnnotations(&buffer, s.Annotations)
 	sName := typeName(s.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
@@ -432,7 +445,14 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	whereClause := make([]string, 0, len(s.Fields))
 	constructorExpressions := make([]string, 0, len(s.Fields))
 	for i, f := range s.Fields {
-		g.writeDocComment(buffer, f.Comment)
+		g.writeDocComment(&buffer, f.Comment)
+		if f.Annotations != nil {
+			fmt.Println("struct field annotations ", s.Name, f.Name, f.Annotations)
+			for _, a := range f.Annotations {
+				fmt.Println("annotation: ", a.Name, a.Value)
+			}
+		}
+		g.writeAnnotations(&buffer, f.Annotations)
 		t := g.toRustType(f.Type, f.Modifier != parser.Required)
 		fieldName := methodName(f.Name)
 		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", fieldName, t))
@@ -539,7 +559,8 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	var buffer bytes.Buffer
 
 	// write the service trait
-	g.writeDocComment(buffer, s.Comment)
+	g.writeDocComment(&buffer, s.Comment)
+	g.writeAnnotations(&buffer, s.Annotations)
 	sName := typeName(s.Name)
 	extends := ""
 	if s.Extends != "" {
@@ -547,7 +568,8 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	}
 	buffer.WriteString(fmt.Sprintf("pub trait F%s%s {\n", sName, extends))
 	for _, method := range s.Methods {
-		g.writeDocComment(buffer, method.Comment)
+		g.writeDocComment(&buffer, method.Comment)
+		g.writeAnnotations(&buffer, method.Annotations)
 
 		args := make([]string, 0, len(method.Arguments))
 		for _, f := range method.Arguments {
@@ -614,10 +636,22 @@ func (g *Generator) toRustType(t *parser.Type, optional bool) string {
 			g.toRustType(t.ValueType, false))
 	}
 
-	if g.Frugal.IsEnum(t) {
+	if g.Frugal.IsUnion(t) {
+		u := g.Frugal.FindUnion(t)
+		if u == nil {
+			return title(t.Name)
+		}
+		name = typeName(u.Name)
+		if t.IncludeName() != "" {
+			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
+			if namespace != nil {
+				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
+			}
+		}
+	} else if g.Frugal.IsEnum(t) {
 		e := g.Frugal.FindEnum(t)
 		if e == nil {
-			return title(e.Name)
+			return title(t.Name)
 		}
 		name = typeName(e.Name)
 		if t.IncludeName() != "" {

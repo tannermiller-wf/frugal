@@ -106,9 +106,17 @@ pub type T2String = T1String;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum HealthCondition {
+    /// This docstring gets added to the generated code because it
+    /// has the @ sign.
     Pass = 1,
+    /// This docstring also gets added to the generated code
+    /// because it has the @ sign.
     Warn = 2,
+    #[deprecated(note = "use something else")]
     Fail = 3,
+    /// This is a docstring comment for a deprecated enum value that has been
+    /// spread across two lines.
+    #[deprecated(note = "don't use this; use \"something else\"")]
     Unknown = 4,
 }
 
@@ -154,9 +162,13 @@ impl TestLowercase {
     }
 }
 
+/// This docstring gets added to the generated code because it has
+/// the @ sign.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Event {
+    /// ID is a unique identifier for an event.
     pub id: Option<Id>,
+    /// Message contains the event payload.
     pub message: Option<String>,
 }
 
@@ -268,6 +280,99 @@ impl TestingDefaults {
             base_status: base_status
                 .into()
                 .unwrap_or(rust::BaseHealthCondition::Fail),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct EventWrapper {
+    pub id: Option<Id>,
+    pub ev: Event,
+    pub events: Option<Vec<Event>>,
+    pub events2: Option<BTreeSet<Event>>,
+    pub event_map: Option<BTreeMap<Id, Event>>,
+    pub nums: Option<Vec<Vec<Int>>>,
+    pub enums: Option<Vec<ItsAnEnum>>,
+    pub a_bool_field: Option<bool>,
+    pub a_union: Option<TestingUnions>,
+    pub typedef_of_typedef: Option<T2String>,
+    /// This is a docstring comment for a deprecated field that has been spread
+    /// across two lines.
+    #[deprecated(note = "use something else")]
+    pub depr: Option<bool>,
+    #[deprecated(note = "use something else")]
+    pub depr_binary: Option<Vec<u8>>,
+    #[deprecated(note = "use something else")]
+    pub depr_list: Option<Vec<bool>>,
+}
+
+impl EventWrapper {
+    pub fn new<F0, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12>(
+        id: F0,
+        ev: F1,
+        events: F2,
+        events2: F3,
+        event_map: F4,
+        nums: F5,
+        enums: F6,
+        a_bool_field: F7,
+        a_union: F8,
+        typedef_of_typedef: F9,
+        depr: F10,
+        depr_binary: F11,
+        depr_list: F12,
+    ) -> EventWrapper
+    where
+        F0: Into<Option<Id>>,
+        F1: Into<Event>,
+        F2: Into<Option<Vec<Event>>>,
+        F3: Into<Option<BTreeSet<Event>>>,
+        F4: Into<Option<BTreeMap<Id, Event>>>,
+        F5: Into<Option<Vec<Vec<Int>>>>,
+        F6: Into<Option<Vec<ItsAnEnum>>>,
+        F7: Into<Option<bool>>,
+        F8: Into<Option<TestingUnions>>,
+        F9: Into<Option<T2String>>,
+        F10: Into<Option<bool>>,
+        F11: Into<Option<Vec<u8>>>,
+        F12: Into<Option<Vec<bool>>>,
+    {
+        EventWrapper {
+            id: id.into(),
+            ev: ev.into(),
+            events: events.into(),
+            events2: events2.into(),
+            event_map: event_map.into(),
+            nums: nums.into(),
+            enums: enums.into(),
+            a_bool_field: a_bool_field.into(),
+            a_union: a_union.into(),
+            typedef_of_typedef: typedef_of_typedef.into(),
+            depr: depr.into(),
+            depr_binary: depr_binary.into(),
+            depr_list: depr_list.into(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FooArgs {
+    pub new_message: Option<String>,
+    pub message_args: Option<String>,
+    pub message_result: Option<String>,
+}
+
+impl FooArgs {
+    pub fn new<F0, F1, F2>(new_message: F0, message_args: F1, message_result: F2) -> FooArgs
+    where
+        F0: Into<Option<String>>,
+        F1: Into<Option<String>>,
+        F2: Into<Option<String>>,
+    {
+        FooArgs {
+            new_message: new_message.into(),
+            message_args: message_args.into(),
+            message_result: message_result.into(),
         }
     }
 }
