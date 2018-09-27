@@ -233,7 +233,7 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 		case parser.LocalConstant:
 			name = strings.ToUpper(idCtx.Constant.Name)
 		case parser.LocalEnum:
-			name = fmt.Sprintf("%s::%s", title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+			name = fmt.Sprintf("%s::%s", typeName(idCtx.Enum.Name), title(strings.ToLower(idCtx.EnumValue.Name)))
 		case parser.IncludeConstant:
 			include := idCtx.Include.Name
 			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
@@ -245,7 +245,7 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 			if namespace := g.Frugal.NamespaceForInclude(include, lang); namespace != nil {
 				include = namespace.Value
 			}
-			name = fmt.Sprintf("%s.%s_%s", includeNameToReference(include), title(idCtx.Enum.Name), idCtx.EnumValue.Name)
+			name = fmt.Sprintf("%s::%s::%s", includeNameToReference(include), typeName(idCtx.Enum.Name), title(strings.ToLower(idCtx.EnumValue.Name)))
 		default:
 			panic(fmt.Sprintf("The Identifier %s has unexpected type %d", identifier, idCtx.Type))
 		}
@@ -317,7 +317,7 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 				for _, field := range s.Fields {
 					if pair.KeyToString() == field.Name {
 						val := g.generateRustLiteral(field.Type, pair.Value, field.Modifier != parser.Required)
-						buffer.WriteString(fmt.Sprintf("%s: %s,\n", strings.ToLower(pair.KeyToString()), val))
+						buffer.WriteString(fmt.Sprintf("%s: %s,\n", methodName(pair.KeyToString()), val))
 					}
 				}
 			}
@@ -423,24 +423,38 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	var buffer bytes.Buffer
 
 	// write the struct def itself
-	g.writeDocComment(buffer, s.Comment)
+	g.writeDocComment(buffer, s.Comment) // TODO: This doesn't seem to be working, see struct Event in the tests
 	sName := typeName(s.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
 	typeParams := make([]string, 0, len(s.Fields))
 	args := make([]string, 0, len(s.Fields))
 	whereClause := make([]string, 0, len(s.Fields))
+	constructorExpressions := make([]string, 0, len(s.Fields))
 	for i, f := range s.Fields {
 		g.writeDocComment(buffer, f.Comment)
 		t := g.toRustType(f.Type, f.Modifier != parser.Required)
-		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", f.Name, t))
+		fieldName := methodName(f.Name)
+		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", fieldName, t))
 
 		// the following are needed in the impl block
+		// TODO: Possible improvement, collect all the like inputs into a single type param rather than repeating ourselves, see struct TestingDefaults in the tests
 		fTypeParam := fmt.Sprintf("F%v", i)
 		typeParams = append(typeParams, fTypeParam)
-		args = append(args, fmt.Sprintf("%s: %s", strings.ToLower(f.Name), fTypeParam))
-		whereClause = append(whereClause, fmt.Sprintf("%s: Into<%s>", fTypeParam, t))
-
+		args = append(args, fmt.Sprintf("%s: %s", fieldName, fTypeParam))
+		whereClauseType := t
+		defaultValue := ""
+		if f.Default != nil {
+			defaultValue = g.generateRustLiteral(f.Type, f.Default, false)
+			if f.Modifier == parser.Required {
+				defaultValue = fmt.Sprintf(".unwrap_or(%s)", defaultValue)
+				whereClauseType = fmt.Sprintf("Option<%s>", whereClauseType)
+			} else {
+				defaultValue = fmt.Sprintf(".or(Some(%s))", defaultValue)
+			}
+		}
+		whereClause = append(whereClause, fmt.Sprintf("%s: Into<%s>", fTypeParam, whereClauseType))
+		constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s.into()%s,", fieldName, fieldName, defaultValue))
 	}
 	buffer.WriteString("}\n\n")
 
@@ -448,9 +462,7 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", sName))
 	buffer.WriteString(fmt.Sprintf("pub fn new%s(%s) -> %s %s {\n", angleBracket(commaSpaceJoin(typeParams)), commaSpaceJoin(args), sName, where(commaSpaceJoin(whereClause))))
 	buffer.WriteString(fmt.Sprintf("%s {\n", sName))
-	for _, f := range s.Fields {
-		buffer.WriteString(fmt.Sprintf("%s: %s.into(),\n", f.Name, f.Name))
-	}
+	buffer.WriteString(strings.Join(constructorExpressions, "\n"))
 	buffer.WriteString("}\n")
 	buffer.WriteString("}\n")
 	buffer.WriteString("}\n\n")
@@ -511,7 +523,7 @@ func methodName(s string) string {
 		}
 
 		if i+1 < len(runes) {
-			if unicode.IsLower(runes[i+1]) && !addedUnderscore {
+			if unicode.IsLower(runes[i+1]) && !addedUnderscore && runes[i] != '_' {
 				buffer.WriteRune('_')
 			}
 		}
@@ -607,27 +619,25 @@ func (g *Generator) toRustType(t *parser.Type, optional bool) string {
 		if e == nil {
 			return title(e.Name)
 		}
-		name := typeName(e.Name)
+		name = typeName(e.Name)
 		if t.IncludeName() != "" {
 			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
 			if namespace != nil {
 				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
 			}
 		}
-		return name
 	} else if g.Frugal.IsStruct(t) {
 		s := g.Frugal.FindStruct(t)
 		if s == nil {
 			return typeName(t.Name)
 		}
-		name := title(s.Name)
+		name = title(s.Name)
 		if t.IncludeName() != "" {
 			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
 			if namespace != nil {
 				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
 			}
 		}
-		return name
 	}
 
 	if name == "" {
