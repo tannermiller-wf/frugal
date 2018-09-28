@@ -10,8 +10,8 @@ extern crate thrift;
 extern crate tokio_core;
 
 use std::net;
-use std::sync::Arc;
 use std::sync::mpsc::sync_channel;
+use std::sync::Arc;
 use std::thread;
 
 use byteorder::{BigEndian, WriteBytesExt};
@@ -22,16 +22,19 @@ use hyper::server::Http;
 use hyper::server::Service;
 use hyper::{Client, Request, Response};
 use rand::random;
-use thrift::protocol::{TCompactInputProtocolFactory, TCompactOutputProtocolFactory,
-                       TOutputProtocol};
+use thrift::protocol::{
+    TCompactInputProtocolFactory, TCompactOutputProtocolFactory, TOutputProtocol,
+};
 use tokio_core::reactor::Core;
 
 use frugal::context::FContext;
 use frugal::processor::FProcessor;
 use frugal::protocol::{FInputProtocol, FInputProtocolFactory, FOutputProtocol};
+use frugal::transport::http::{
+    ContentTransferEncodingHeader, FHttpService, FHttpTransportBuilder, BASE64_ENCODING,
+    FRUGAL_CONTENT_TYPE,
+};
 use frugal::transport::FTransport;
-use frugal::transport::http::{BASE64_ENCODING, ContentTransferEncodingHeader, FHttpService,
-                              FHttpTransportBuilder, FRUGAL_CONTENT_TYPE};
 
 header!{ (Foo, "foo") => [String] }
 header!{ (FirstHeader, "first-header") => [String] }
@@ -105,8 +108,7 @@ fn test_transport_service_integration() {
                     setup_sender.send(()).unwrap();
                     ok::<(), ()>(())
                 }).then(|_| kill_receiver.map_err(|_| ())),
-            )
-            .unwrap();
+            ).unwrap();
     });
 
     let core = Core::new().unwrap();
@@ -119,9 +121,8 @@ fn test_transport_service_integration() {
         let mut request_headers = Headers::new();
         request_headers.set(Foo("bar".to_string()));
         request_headers
-    })
-        .with_request_headers_from_fcontext(Box::new(get_request_headers))
-        .build();
+    }).with_request_headers_from_fcontext(Box::new(get_request_headers))
+    .build();
 
     let fctx = FContext::new(None);
 
@@ -200,8 +201,7 @@ fn test_http_transport_lifecycle() {
                     setup_sender.send(()).unwrap();
                     ok::<(), ()>(())
                 }).then(|_| kill_receiver.map_err(|_| ())),
-            )
-            .unwrap();
+            ).unwrap();
     });
 
     let core = Core::new().unwrap();

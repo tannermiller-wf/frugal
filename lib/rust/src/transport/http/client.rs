@@ -164,7 +164,8 @@ impl FTransport for FHttpTransport {
         };
 
         // Make the HTTP request
-        let initial_request = self.client
+        let initial_request = self
+            .client
             .request(request)
             .map_err(|err| thrift::Error::User(Box::new(err)))
             .and_then(|response| {
@@ -193,8 +194,7 @@ impl FTransport for FHttpTransport {
                     thrift::TransportErrorKind::TimedOut,
                     "time out error",
                 )),
-            })
-            .and_then(|resp| {
+            }).and_then(|resp| {
                 let status_code = resp.status().as_u16();
 
                 resp.body()

@@ -5,8 +5,9 @@ extern crate thrift;
 use std::sync::Arc;
 
 use hyper::server::Http;
-use thrift::protocol::{TCompactInputProtocolFactory, TCompactOutputProtocolFactory,
-                       TOutputProtocol};
+use thrift::protocol::{
+    TCompactInputProtocolFactory, TCompactOutputProtocolFactory, TOutputProtocol,
+};
 
 use frugal::processor::FProcessor;
 use frugal::protocol::{FInputProtocol, FInputProtocolFactory, FOutputProtocol};

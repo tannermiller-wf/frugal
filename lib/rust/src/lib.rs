@@ -13,9 +13,9 @@ extern crate tokio_core;
 extern crate uuid;
 
 pub mod context;
+pub mod processor;
 pub mod protocol;
 pub mod transport;
-pub mod processor;
 
 mod util;
 

@@ -7,7 +7,14 @@ use thrift::protocol::{TInputProtocol, TOutputProtocol};
 use context::FContext;
 use protocol::{FInputProtocol, FOutputProtocol};
 
-pub trait ServiceMiddleware {}
+// TODO: Figure out middleware, seems hard without reflection, look at adapting frugal to tower-rs
+//pub trait ServiceMiddleware {}
+
+// Adding middleware, processor functions, and annotations is static at startup time (in generated
+// code) so probably don't need these explicit here. Maybe have a holder struct. They will be called
+// from FXProcesor::new(X, middleware)
+//
+// TODO:Can I use a macro to construct the inner call that is wrapped by middleware?
 
 pub trait FProcessor {
     fn process(
@@ -34,12 +41,14 @@ pub trait FProcessorFunction {
     //fn annotations(&self) -> &BTreeMap<String, BTreeMap<String, String>>;
 }
 
+// TODO: This goes away, replaced by actual generated code
 pub trait FBaseProcessor {
     fn process_map(&self) -> &BTreeMap<String, Box<FProcessorFunction>>;
     //fn process_map_mut(&mut self) -> BTreeMap<String, Box<FProcessorFunction>>;
     //fn annotations(&self) -> &BTreeMap<String, BTreeMap<String, String>>;
 }
 
+// TODO: this goes into generated code
 impl<T> FProcessor for T
 where
     T: FBaseProcessor,
@@ -89,7 +98,7 @@ where
     //fn add_middleware(&mut self, Box<ServiceMiddleware>);
 
     //fn annotations(&self) -> &BTreeMap<String, BTreeMap<String, String>> {
-    //    FBaseProcessor::annotations(self)
+    //    unimplemented!()
     //}
 }
 

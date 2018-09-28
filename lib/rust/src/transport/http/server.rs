@@ -6,15 +6,17 @@ use base64;
 use byteorder::{BigEndian, WriteBytesExt};
 use futures::future::{self, Future};
 use futures::stream::Stream;
-use hyper::{self, Body, StatusCode};
 use hyper::header::{ContentLength, ContentType};
 use hyper::server::{NewService, Request, Response, Service};
-use thrift::transport::{TBufferedReadTransportFactory, TBufferedWriteTransportFactory,
-                        TReadTransportFactory, TWriteTransportFactory};
+use hyper::{self, Body, StatusCode};
+use thrift::transport::{
+    TBufferedReadTransportFactory, TBufferedWriteTransportFactory, TReadTransportFactory,
+    TWriteTransportFactory,
+};
 
+use super::*;
 use processor::FProcessor;
 use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
-use super::*;
 
 // TODO: could this be an RC and RefCell?
 struct MutexWriteTransport(Arc<Mutex<Vec<u8>>>);
@@ -91,7 +93,8 @@ impl Service for FHttpService {
         };
 
         // pull out the payload limit header
-        let limit = req.headers()
+        let limit = req
+            .headers()
             .get::<PayloadLimit>()
             .map(|&PayloadLimit(val)| val);
 
@@ -192,13 +195,13 @@ impl Clone for FHttpService {
 mod test {
     use std::fmt;
 
-    use thrift::protocol::TOutputProtocol;
-    use thrift;
     use hyper::Method;
+    use thrift;
+    use thrift::protocol::TOutputProtocol;
 
+    use super::*;
     use context::FContext;
     use protocol::{FInputProtocol, FOutputProtocol};
-    use super::*;
 
     fn response_to_string(response: Response) -> String {
         response
@@ -210,8 +213,7 @@ mod test {
                     v.append(&mut chunk.to_vec())
                 }
                 String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-            })
-            .wait()
+            }).wait()
             .unwrap()
     }
 

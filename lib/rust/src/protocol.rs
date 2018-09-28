@@ -315,7 +315,8 @@ impl FInputProtocolFactory {
 
         FInputProtocol {
             transport: TReadTransportWrapper::wrap(&tr_arc),
-            protocol: self.input_proto_factory
+            protocol: self
+                .input_proto_factory
                 .create(TReadTransportWrapper::wrap(&tr_arc)),
         }
     }
@@ -341,8 +342,7 @@ impl FOutputProtocol {
                                 err.description()
                             ),
                         )
-                    })
-                    .and_then(|n| {
+                    }).and_then(|n| {
                         if n < buf.len() {
                             Err(thrift::new_transport_error(
                                 thrift::TransportErrorKind::Unknown,
@@ -352,8 +352,7 @@ impl FOutputProtocol {
                             Ok(())
                         }
                     })
-            })
-            .and_then(|_| {
+            }).and_then(|_| {
                 self.transport.flush().map_err(|err| {
                     thrift::new_transport_error(
                         thrift::TransportErrorKind::Unknown,
@@ -500,7 +499,8 @@ impl FOutputProtocolFactory {
 
         FOutputProtocol {
             transport: TWriteTransportWrapper::wrap(&tr_arc),
-            protocol: self.output_proto_factory
+            protocol: self
+                .output_proto_factory
                 .create(TWriteTransportWrapper::wrap(&tr_arc)),
         }
     }

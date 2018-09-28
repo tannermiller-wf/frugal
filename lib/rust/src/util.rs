@@ -1,5 +1,5 @@
-use std::io;
 use std::error::Error;
+use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt};
 use thrift;

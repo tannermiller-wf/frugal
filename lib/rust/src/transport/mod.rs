@@ -1,5 +1,5 @@
-use thrift::transport::TReadTransport;
 use thrift;
+use thrift::transport::TReadTransport;
 
 use context::FContext;
 

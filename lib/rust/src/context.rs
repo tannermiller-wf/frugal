@@ -41,7 +41,7 @@ impl FContext {
     pub fn new(correlation_id: Option<&str>) -> Self {
         let cid = match correlation_id {
             Some(cid) => cid.to_string(),
-            None => Uuid::new_v4().simple().to_string(),
+            None => Uuid::new_v4().to_simple().to_string(),
         };
 
         let mut request = BTreeMap::new();
