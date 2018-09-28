@@ -29,7 +29,6 @@ import (
 )
 
 // TODO: Run clippy on generated code to make sure its clean
-// TODO: Implement annotations (somehow)
 
 const (
 	lang             = "rs"
@@ -262,9 +261,12 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 			case "list":
 				var buffer bytes.Buffer
 				buffer.WriteString("vec![\n")
-				for _, v := range value.([]interface{}) {
-					buffer.WriteString(fmt.Sprintf("%s,\n", g.generateRustLiteral(underlyingType.ValueType, v, false)))
+				values := value.([]interface{})
+				encodedValues := make([]string, 0, len(values))
+				for _, v := range values {
+					encodedValues = append(encodedValues, g.generateRustLiteral(underlyingType.ValueType, v, false))
 				}
+				buffer.WriteString(strings.Join(encodedValues, ", "))
 				buffer.WriteString("]")
 				name = buffer.String()
 			case "set":
@@ -345,7 +347,6 @@ func (g *Generator) writeDocComment(buffer *bytes.Buffer, comments []string) {
 // Currently only deprecated is supported, all others are ignored
 func (g *Generator) writeAnnotations(buffer *bytes.Buffer, annotations parser.Annotations) {
 	if note, ok := annotations.Deprecated(); ok {
-		fmt.Println("got deprecated: ", note)
 		buffer.WriteString(fmt.Sprintf("#[deprecated(note = %q)]\n", note))
 	}
 }
@@ -446,12 +447,6 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	constructorExpressions := make([]string, 0, len(s.Fields))
 	for i, f := range s.Fields {
 		g.writeDocComment(&buffer, f.Comment)
-		if f.Annotations != nil {
-			fmt.Println("struct field annotations ", s.Name, f.Name, f.Annotations)
-			for _, a := range f.Annotations {
-				fmt.Println("annotation: ", a.Name, a.Value)
-			}
-		}
 		g.writeAnnotations(&buffer, f.Annotations)
 		t := g.toRustType(f.Type, f.Modifier != parser.Required)
 		fieldName := methodName(f.Name)
@@ -492,12 +487,37 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 }
 
 func (g *Generator) GenerateUnion(union *parser.Struct) error {
-	return nil
+	var buffer bytes.Buffer
+	g.writeDocComment(&buffer, union.Comment)
+	g.writeAnnotations(&buffer, union.Annotations)
+	uName := typeName(union.Name)
+	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
+	buffer.WriteString(fmt.Sprintf("pub enum %s{\n", uName))
+	for _, f := range union.Fields {
+		g.writeDocComment(&buffer, f.Comment)
+		g.writeAnnotations(&buffer, f.Annotations)
+		buffer.WriteString(fmt.Sprintf("%s(%s),\n", typeName(f.Name), g.toRustType(f.Type, false)))
+	}
+	buffer.WriteString(fmt.Sprintf("}\n\n"))
+	_, err := g.rootFile.Write(buffer.Bytes())
+	return err
 }
 
 func (g *Generator) GenerateException(exception *parser.Struct) error {
-	// TODO: Implement the failure crate for these
-	return g.GenerateStruct(exception)
+	if err := g.GenerateStruct(exception); err != nil {
+		return err
+	}
+
+	tName := typeName(exception.Name)
+
+	var buffer bytes.Buffer
+	buffer.WriteString(fmt.Sprintf("impl std::error::Error for %s {}\n\n", tName))
+
+	buffer.WriteString(fmt.Sprintf("impl std::fmt::Display for %s {\n", tName))
+	buffer.WriteString("fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {\nwrite!(f, \"{:?}\", self)\n}\n}\n\n")
+
+	_, err := g.rootFile.Write(buffer.Bytes())
+	return err
 }
 
 func (g *Generator) GenerateTypesImports(file *os.File) error {

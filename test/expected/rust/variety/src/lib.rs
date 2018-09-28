@@ -376,3 +376,48 @@ impl FooArgs {
         }
     }
 }
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum TestingUnions {
+    AnID(Id),
+    AString(String),
+    Someotherthing(Int),
+    AnInt16(i16),
+    Requests(Request),
+    BinFieldInUnion(Vec<u8>),
+    #[deprecated(note = "use something else")]
+    Depr(bool),
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct AwesomeException {
+    /// ID is a unique identifier for an awesome exception.
+    pub id: Option<Id>,
+    /// Reason contains the error message.
+    pub reason: Option<String>,
+    #[deprecated(note = "use something else")]
+    pub depr: Option<bool>,
+}
+
+impl AwesomeException {
+    pub fn new<F0, F1, F2>(id: F0, reason: F1, depr: F2) -> AwesomeException
+    where
+        F0: Into<Option<Id>>,
+        F1: Into<Option<String>>,
+        F2: Into<Option<bool>>,
+    {
+        AwesomeException {
+            id: id.into(),
+            reason: reason.into(),
+            depr: depr.into(),
+        }
+    }
+}
+
+impl std::error::Error for AwesomeException {}
+
+impl std::fmt::Display for AwesomeException {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}

@@ -55,4 +55,12 @@ impl ApiException {
     }
 }
 
+impl std::error::Error for ApiException {}
+
+impl std::fmt::Display for ApiException {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}
+
 pub mod basefoo_service;
