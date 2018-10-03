@@ -29,6 +29,7 @@ import (
 )
 
 // TODO: Run clippy on generated code to make sure its clean
+// TODO: json serialization is a thing here, look at bringing in serde
 
 const (
 	lang             = "rs"
@@ -113,8 +114,15 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 	if err = g.GenerateNewline(g.rootFile, 2); err != nil {
 		return err
 	}
-	// TODO: externs go here
-	return nil
+	_, err = g.rootFile.WriteString(
+		`extern crate thrift;
+		
+		#[allow(unused)]
+		use std::collections::{BTreeMap, BTreeSet};
+
+		`,
+	)
+	return err
 }
 
 func (g *Generator) TeardownGenerator() error {
@@ -410,6 +418,32 @@ func (g *Generator) GenerateEnum(enum *parser.Enum) error {
 		buffer.WriteString(fmt.Sprintf("%s = %v,\n", title(strings.ToLower(v.Name)), v.Value))
 	}
 	buffer.WriteString(fmt.Sprintf("}\n\n"))
+
+	// impl block
+	buffer.WriteString(fmt.Sprintf("impl %s {\n", eName))
+
+	// from_i32 method
+	buffer.WriteString(fmt.Sprintf(
+		`pub fn from_i32(i: i32) -> thrift::Result<%s> {
+			 match i{
+				 `,
+		eName))
+	for _, v := range enum.Values {
+		vName := title(strings.ToLower(v.Name))
+		buffer.WriteString(fmt.Sprintf("i if %s::%s as i32 == i => Ok(%s::%s),\n", eName, vName, eName, vName))
+	}
+	buffer.WriteString(fmt.Sprintf(
+		`		_ => Err(thrift::new_protocol_error(
+					thrift::ProtocolErrorKind::InvalidData,
+					format!("{} is not a valid integer value for %s", i),
+				)),
+			}
+		}`,
+		eName,
+	))
+
+	buffer.WriteString("}\n\n")
+
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
 }
@@ -441,11 +475,8 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	sName := typeName(s.Name)
 	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
-	typeParams := make([]string, 0, len(s.Fields))
-	args := make([]string, 0, len(s.Fields))
-	whereClause := make([]string, 0, len(s.Fields))
 	constructorExpressions := make([]string, 0, len(s.Fields))
-	for i, f := range s.Fields {
+	for _, f := range s.Fields {
 		g.writeDocComment(&buffer, f.Comment)
 		g.writeAnnotations(&buffer, f.Annotations)
 		t := g.toRustType(f.Type, f.Modifier != parser.Required)
@@ -453,37 +484,359 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", fieldName, t))
 
 		// the following are needed in the impl block
-		// TODO: Possible improvement, collect all the like inputs into a single type param rather than repeating ourselves, see struct TestingDefaults in the tests
-		fTypeParam := fmt.Sprintf("F%v", i)
-		typeParams = append(typeParams, fTypeParam)
-		args = append(args, fmt.Sprintf("%s: %s", fieldName, fTypeParam))
-		whereClauseType := t
 		defaultValue := ""
 		if f.Default != nil {
 			defaultValue = g.generateRustLiteral(f.Type, f.Default, false)
 			if f.Modifier == parser.Required {
-				defaultValue = fmt.Sprintf(".unwrap_or(%s)", defaultValue)
-				whereClauseType = fmt.Sprintf("Option<%s>", whereClauseType)
+				defaultValue = fmt.Sprintf("%s", defaultValue)
 			} else {
-				defaultValue = fmt.Sprintf(".or(Some(%s))", defaultValue)
+				defaultValue = fmt.Sprintf("Some(%s)", defaultValue)
+			}
+			constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s,", fieldName, defaultValue))
+		} else {
+			if f.Modifier == parser.Required {
+				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s,", fieldName, g.zeroValue(f.Type)))
+			} else {
+				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: None,", fieldName))
 			}
 		}
-		whereClause = append(whereClause, fmt.Sprintf("%s: Into<%s>", fTypeParam, whereClauseType))
-		constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s.into()%s,", fieldName, fieldName, defaultValue))
 	}
 	buffer.WriteString("}\n\n")
 
 	// now the impl block
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", sName))
-	buffer.WriteString(fmt.Sprintf("pub fn new%s(%s) -> %s %s {\n", angleBracket(commaSpaceJoin(typeParams)), commaSpaceJoin(args), sName, where(commaSpaceJoin(whereClause))))
+
+	// constructor method
+	buffer.WriteString(fmt.Sprintf("pub fn new() -> %s {\n", sName))
 	buffer.WriteString(fmt.Sprintf("%s {\n", sName))
 	buffer.WriteString(strings.Join(constructorExpressions, "\n"))
 	buffer.WriteString("}\n")
-	buffer.WriteString("}\n")
+	buffer.WriteString("}\n\n")
+
+	// primary read method
+	buffer.WriteString(
+		`pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+		 where
+		 	T: thrift::protocol::TInputProtocol,
+		 {
+		 	iprot.read_struct_begin()?;
+		 	loop {
+				let field_id = iprot.read_field_begin()?;
+				if field_id.field_type == thrift::protocol::TType::Stop {
+					break;
+				};
+				match field_id.id {
+					`,
+	)
+	for _, f := range s.Fields {
+		buffer.WriteString(fmt.Sprintf("Some(%v) => self.read_field_%v(iprot)?,\n", f.ID, f.ID))
+	}
+	buffer.WriteString(
+		`			_ => iprot.skip(field_id.field_type)?,
+				};
+				iprot.read_field_end()?;
+			}
+		 	iprot.read_struct_end()
+	 	}
+		
+		`,
+	)
+
+	// field read methods
+	for _, f := range s.Fields {
+		buffer.WriteString(fmt.Sprintf(
+			`fn read_field_%v<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    		 where
+    		     T: thrift::protocol::TInputProtocol,
+    		 {`,
+			f.ID,
+		))
+		fieldName := methodName(f.Name)
+		fType := g.Frugal.UnderlyingType(f.Type)
+		g.generateFieldReadDefinition(&buffer, fieldName, fType)
+		varExpr := fieldName
+		if f.Modifier != parser.Required {
+			varExpr = fmt.Sprintf("Some(%s)", varExpr)
+		}
+		buffer.WriteString(fmt.Sprintf(
+			`	self.%s = %s;
+				Ok(())
+			}
+			
+			`,
+			fieldName,
+			varExpr,
+		))
+	}
+
+	// primary write method
+	buffer.WriteString(fmt.Sprintf(
+		`pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+		 where
+		 	T: thrift::protocol::TOutputProtocol,
+		 {
+			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier{
+				 name: %q.into(),
+			 })?;
+			`,
+		s.Name,
+	))
+	for _, f := range s.Fields {
+		buffer.WriteString(fmt.Sprintf("self.write_field_%d(oprot)?;\n", f.ID))
+	}
+	buffer.WriteString(
+		`	oprot.write_field_stop()?;
+			oprot.write_struct_end()
+	 	}
+		
+		`,
+	)
+
+	// field write methods
+	for _, f := range s.Fields {
+		buffer.WriteString(fmt.Sprintf(
+			`fn write_field_%v<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    		 where
+    		     T: thrift::protocol::TOutputProtocol,
+    		 {`,
+			f.ID,
+		))
+		fieldName := methodName(f.Name)
+		fType := g.Frugal.UnderlyingType(f.Type)
+		if f.Modifier == parser.Required {
+			buffer.WriteString(fmt.Sprintf("let %s = self.%s;\n", fieldName, fieldName))
+		} else {
+			buffer.WriteString(fmt.Sprintf(
+				`let %s = match self.%s {
+					 Some(%s) => %s,
+					 None => return Ok(()),
+				 };
+			`,
+				fieldName, fieldName, fieldName, fieldName,
+			))
+		}
+		buffer.WriteString(fmt.Sprintf(
+			`oprot.write_field_begin(&thrift::protocol::TFieldIdentifier {
+				name: Some(%q.into()),
+				field_type: thrift::protocol::TType::%s,
+				id: Some(%d),
+			})?;
+			`,
+			f.Name, g.ttypeToEnum(fType), f.ID,
+		))
+		g.generateFieldWriteDefinition(&buffer, fieldName, fType)
+		buffer.WriteString(
+			`	oprot.write_field_end()
+			}
+			
+			`,
+		)
+	}
+
 	buffer.WriteString("}\n\n")
 
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
+}
+
+func (g *Generator) generateFieldReadDefinition(buffer *bytes.Buffer, fieldName string, fType *parser.Type) {
+	if fType.IsPrimitive() {
+		fTypeName := fType.Name
+		if fTypeName == "binary" {
+			fTypeName = "bytes"
+		}
+		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_%s()?;\n", fieldName, fTypeName))
+	} else if g.Frugal.IsEnum(fType) {
+		eName := g.canonicalizeTypeName(fType)
+		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_i32().map(%s::from_i32)?;\n", fieldName, eName))
+	} else if g.Frugal.IsUnion(fType) {
+		uName := g.canonicalizeTypeName(fType)
+		buffer.WriteString(fmt.Sprintf("let %s = %s::read(iprot)?;\n", fieldName, uName))
+	} else if fType.IsCustom() {
+		tName := g.canonicalizeTypeName(fType)
+		buffer.WriteString(fmt.Sprintf(
+			`let mut %s = %s::new();
+			 %s.read(iprot)?;
+			`, fieldName, tName, fieldName))
+	} else if fType.Name == "list" {
+		buffer.WriteString(fmt.Sprintf(
+			`let list_id = iprot.read_list_begin()?;
+			 let mut %s = Vec::with_capacity(list_id.size as usize);
+			 for _ in 0..list_id.size {
+				 `,
+			fieldName,
+		))
+		itemName := fmt.Sprintf("%s_item", fieldName)
+		vType := g.Frugal.UnderlyingType(fType.ValueType)
+		g.generateFieldReadDefinition(buffer, itemName, vType)
+		buffer.WriteString(fmt.Sprintf(
+			`	%s.push(%s);
+			}
+			 iprot.read_list_end()?;
+			 `, fieldName, itemName,
+		))
+	} else if fType.Name == "map" {
+		buffer.WriteString(fmt.Sprintf(
+			`let map_id = iprot.read_map_begin()?;
+			 let mut %s = BTreeMap::new();
+			 for _ in 0..map_id.size {`,
+			fieldName,
+		))
+		keyName := fmt.Sprintf("%s_key", fieldName)
+		keyType := g.Frugal.UnderlyingType(fType.KeyType)
+		g.generateFieldReadDefinition(buffer, keyName, keyType)
+		valueName := fmt.Sprintf("%s_value", fieldName)
+		valueType := g.Frugal.UnderlyingType(fType.ValueType)
+		g.generateFieldReadDefinition(buffer, valueName, valueType)
+		buffer.WriteString(fmt.Sprintf("%s.insert(%s, %s);\n", fieldName, keyName, valueName))
+		buffer.WriteString(
+			`}
+			 iprot.read_map_end()?;
+		`)
+	} else if fType.Name == "set" {
+		buffer.WriteString(fmt.Sprintf(
+			`let set_id = iprot.read_set_begin()?;
+			 let mut %s = BTreeSet::new();
+			 for _ in 0..set_id.size {`,
+			fieldName,
+		))
+		itemName := fmt.Sprintf("%s_item", fieldName)
+		itemType := g.Frugal.UnderlyingType(fType.ValueType)
+		g.generateFieldReadDefinition(buffer, itemName, itemType)
+		buffer.WriteString(fmt.Sprintf("%s.insert(%s);\n", fieldName, itemName))
+		buffer.WriteString(
+			`}
+			 iprot.read_set_end()?;
+		`)
+	}
+}
+
+func (g *Generator) ttypeToEnum(t *parser.Type) string {
+	switch t.Name {
+	case "i8":
+		return "I08"
+	case "bool", "i16", "i32", "i64", "double", "string", "list", "set", "map":
+		return title(t.Name)
+	case "binary":
+		return "Bytes"
+	}
+
+	if g.Frugal.IsEnum(t) {
+		return "I32"
+	}
+
+	return "Struct"
+}
+
+func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName string, fType *parser.Type) {
+	if fType.IsPrimitive() {
+		varName := fieldName
+		fTypeName := fType.Name
+		if fType.Name == "string" || fType.Name == "binary" {
+			if fTypeName == "binary" {
+				fTypeName = "bytes"
+			}
+			varName = fmt.Sprintf("&%s", varName)
+		}
+		if fTypeName == "binary" {
+			fTypeName = "bytes"
+		}
+		buffer.WriteString(fmt.Sprintf("oprot.write_%s(%s)?;\n", fTypeName, varName))
+	} else if g.Frugal.IsEnum(fType) {
+		buffer.WriteString(fmt.Sprintf("oprot.write_i32(%s as i32)?;\n", fieldName))
+	} else if fType.IsCustom() {
+		buffer.WriteString(fmt.Sprintf("%s.write(oprot)?;\n", fieldName))
+	} else if fType.Name == "list" {
+		itemName := fmt.Sprintf("%s_item", fieldName)
+		vType := g.Frugal.UnderlyingType(fType.ValueType)
+		buffer.WriteString(fmt.Sprintf(
+			`oprot.write_list_begin(&thrift::protocol::TListIdentifier{
+				element_type: thrift::protocol::TType::%s,
+				size: %s.len() as i32,
+			 })?;
+			 for %s in %s {
+			 `,
+			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
+		))
+		g.generateFieldWriteDefinition(buffer, itemName, vType)
+		buffer.WriteString(
+			`}
+			 oprot.write_list_end()?;
+			 `)
+	} else if fType.Name == "set" {
+		itemName := fmt.Sprintf("%s_item", fieldName)
+		vType := g.Frugal.UnderlyingType(fType.ValueType)
+		buffer.WriteString(fmt.Sprintf(
+			`oprot.write_set_begin(&thrift::protocol::TSetIdentifier{
+				element_type: thrift::protocol::TType::%s,
+				size: %s.len() as i32,
+			 })?;
+			 for %s in %s {
+			 `,
+			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
+		))
+		g.generateFieldWriteDefinition(buffer, itemName, vType)
+		buffer.WriteString(
+			`}
+			 oprot.write_set_end()?;
+			 `)
+	} else if fType.Name == "map" {
+		kType := g.Frugal.UnderlyingType(fType.KeyType)
+		keyname := fmt.Sprintf("%s_key", fieldName)
+		valuename := fmt.Sprintf("%s_value", fieldName)
+		vType := g.Frugal.UnderlyingType(fType.ValueType)
+		buffer.WriteString(fmt.Sprintf(
+			`oprot.write_map_begin(&thrift::protocol::TMapIdentifier {
+				key_type: thrift::protocol::TType::%s,
+				value_type: thrift::protocol::TType::%s,
+				size: %s.len() as i32,
+			 })?;
+			 for (%s, %s) in %s {
+			 `,
+			g.ttypeToEnum(kType), g.ttypeToEnum(vType), fieldName, keyname, valuename, fieldName,
+		))
+		g.generateFieldWriteDefinition(buffer, keyname, kType)
+		g.generateFieldWriteDefinition(buffer, valuename, vType)
+		buffer.WriteString(
+			`}
+        	 oprot.write_map_end()?;
+			 `,
+		)
+	}
+}
+
+// zeroValue provides a value to be used in constructors where its a required field, but no default value is provided.
+func (g *Generator) zeroValue(t *parser.Type) string {
+	switch t.Name {
+	case "bool":
+		return "false"
+	case "i8", "byte", "i16", "i32", "i64":
+		return "0"
+	case "double":
+		return "0.0"
+	case "string":
+		return `""`
+	case "binary", "list":
+		return "Vec::new()"
+	case "set":
+		return "BTreeSet::new()"
+	case "map":
+		return "BTreeMap::new()"
+	}
+
+	if g.Frugal.IsUnion(t) {
+		u := g.Frugal.FindUnion(t)
+		uv := u.Fields[0]
+		return fmt.Sprintf("%s::%s(%s)", g.toRustType(t, false), typeName(uv.Name), g.zeroValue(uv.Type))
+	} else if g.Frugal.IsStruct(t) {
+		return fmt.Sprintf("%s::new()", typeName(t.Name))
+	} else if g.Frugal.IsEnum(t) {
+		e := g.Frugal.FindEnum(t)
+		ev := e.Values[0]
+		return fmt.Sprintf("%s::%s", g.toRustType(t, false), title(strings.ToLower(ev.Name)))
+	}
+
+	panic("cannot generate zero value for unrecognized type")
 }
 
 func (g *Generator) GenerateUnion(union *parser.Struct) error {
@@ -499,6 +852,108 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 		buffer.WriteString(fmt.Sprintf("%s(%s),\n", typeName(f.Name), g.toRustType(f.Type, false)))
 	}
 	buffer.WriteString(fmt.Sprintf("}\n\n"))
+
+	// impl block
+	buffer.WriteString(fmt.Sprintf("impl %s {\n", uName))
+
+	// read methods
+	varName := methodName(uName)
+	buffer.WriteString(fmt.Sprintf(
+		`pub fn read<T>(iprot: &mut T) -> thrift::Result<%s>
+    	 where
+    	     T: thrift::protocol::TInputProtocol,
+    	 {
+    	     iprot.read_struct_begin()?;
+    	     let mut %s = None;
+    	     loop {
+    	         let field_id = iprot.read_field_begin()?;
+    	         if field_id.field_type == thrift::protocol::TType::Stop {
+    	             break;
+    	         };
+    	         if let Some(_) = %s {
+    	             return Err(thrift::new_protocol_error(
+    	                 thrift::ProtocolErrorKind::InvalidData,
+    	                 "%s read union: exactly one field must be set.",
+    	             ));
+    	         };
+    	         match field_id.id {`,
+		uName, varName, varName, uName,
+	))
+	for _, f := range union.Fields {
+		buffer.WriteString(fmt.Sprintf("Some(%d) => %s = Some(Self::read_field_%d(iprot)?),\n", f.ID, varName, f.ID))
+	}
+	buffer.WriteString(fmt.Sprintf(
+		`	 		_ => iprot.skip(field_id.field_type)?,
+				};
+				iprot.read_field_end()?;
+			 }
+			 iprot.read_struct_end()?;
+			 testing_unions.ok_or_else(|| {
+				 thrift::new_protocol_error(
+					 thrift::ProtocolErrorKind::InvalidData,
+					 "no field for union was sent",
+				 )
+			 })
+		 }
+		 
+		 `))
+
+	// field read methods
+	for _, f := range union.Fields {
+		buffer.WriteString(fmt.Sprintf(
+			`fn read_field_%d<T>(iprot: &mut T) -> thrift::Result<%s>
+    	 	 where
+    	 	     T: thrift::protocol::TInputProtocol,
+    	 	 {
+			 `,
+			f.ID, uName,
+		))
+		variant := typeName(f.Name)
+		fieldName := methodName(f.Name)
+		fType := g.Frugal.UnderlyingType(f.Type)
+		g.generateFieldReadDefinition(&buffer, fieldName, fType)
+		buffer.WriteString(fmt.Sprintf(
+			`	Ok(%s::%s(%s))
+			}
+
+			`,
+			uName, variant, fieldName,
+		))
+
+	}
+
+	// write method
+	buffer.WriteString(fmt.Sprintf(
+		`pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+		 where
+		 	T: thrift::protocol::TOutputProtocol,
+		 {
+			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier{
+				 name: %q.into(),
+			 })?;
+			 match *self {
+			`,
+		union.Name,
+	))
+	for _, f := range union.Fields {
+		variant := typeName(f.Name)
+		fieldName := methodName(f.Name)
+		buffer.WriteString(fmt.Sprintf("%s::%s(%s) => {\n", uName, variant, fieldName))
+		fType := g.Frugal.UnderlyingType(f.Type)
+		g.generateFieldWriteDefinition(&buffer, fieldName, fType)
+		buffer.WriteString("}")
+	}
+	buffer.WriteString(
+		`	};
+			oprot.write_field_stop()?;
+			oprot.write_struct_end()
+	 	}
+		
+		`,
+	)
+
+	buffer.WriteString("}\n\n")
+
 	_, err := g.rootFile.Write(buffer.Bytes())
 	return err
 }
@@ -621,6 +1076,23 @@ func title(s string) string {
 	return strings.Title(s)
 }
 
+func (g *Generator) canonicalizeTypeName(t *parser.Type) string {
+	tName := t.Name
+	if strings.Contains(tName, ".") {
+		tName = strings.Split(tName, ".")[1]
+		tName = typeName(tName)
+		if t.IncludeName() != "" {
+			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
+			if namespace != nil {
+				tName = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), tName)
+			}
+		}
+	} else {
+		tName = typeName(tName)
+	}
+	return tName
+}
+
 func (g *Generator) toRustType(t *parser.Type, optional bool) string {
 	if t == nil {
 		return "()"
@@ -656,49 +1128,9 @@ func (g *Generator) toRustType(t *parser.Type, optional bool) string {
 			g.toRustType(t.ValueType, false))
 	}
 
-	if g.Frugal.IsUnion(t) {
-		u := g.Frugal.FindUnion(t)
-		if u == nil {
-			return title(t.Name)
-		}
-		name = typeName(u.Name)
-		if t.IncludeName() != "" {
-			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
-			if namespace != nil {
-				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
-			}
-		}
-	} else if g.Frugal.IsEnum(t) {
-		e := g.Frugal.FindEnum(t)
-		if e == nil {
-			return title(t.Name)
-		}
-		name = typeName(e.Name)
-		if t.IncludeName() != "" {
-			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
-			if namespace != nil {
-				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
-			}
-		}
-	} else if g.Frugal.IsStruct(t) {
-		s := g.Frugal.FindStruct(t)
-		if s == nil {
-			return typeName(t.Name)
-		}
-		name = title(s.Name)
-		if t.IncludeName() != "" {
-			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
-			if namespace != nil {
-				name = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), name)
-			}
-		}
-	}
-
+	// otherwise we're a struct, enum, or union
 	if name == "" {
-		name = typeName(t.Name)
-		if strings.Contains(name, ".") {
-			name = strings.Replace(name, ".", "::", -1)
-		}
+		name = g.canonicalizeTypeName(t)
 	}
 
 	if optional {
