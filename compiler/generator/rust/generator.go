@@ -114,14 +114,30 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 	if err = g.GenerateNewline(g.rootFile, 2); err != nil {
 		return err
 	}
-	_, err = g.rootFile.WriteString(
-		`extern crate thrift;
+
+	includedCrates := []string{}
+	for _, include := range g.Frugal.Includes {
+		namespace := g.Frugal.NamespaceForInclude(include.Name, lang)
+		if namespace != nil {
+			includedCrates = append(includedCrates, fmt.Sprintf("extern crate %s;", includeNameToReference(namespace.Value)))
+		}
+	}
+	_, err = g.rootFile.WriteString(fmt.Sprintf(
+		`#![allow(deprecated)]
+		 #![allow(unused_imports)]
+		
+		 %s
+		 extern crate frugal;
+		 extern crate thrift;
+		 #[macro_use]
+		 extern crate lazy_static;
 		
 		#[allow(unused)]
 		use std::collections::{BTreeMap, BTreeSet};
 
 		`,
-	)
+		strings.Join(includedCrates, "\n"),
+	))
 	return err
 }
 
@@ -233,12 +249,17 @@ func includeNameToReference(includeName string) string {
 }
 
 func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optional bool) string {
+	underlyingType := g.Frugal.UnderlyingType(t)
 	var name string
 	if identifier, ok := value.(parser.Identifier); ok {
 		idCtx := g.Frugal.ContextFromIdentifier(identifier)
 		switch idCtx.Type {
 		case parser.LocalConstant:
+			fmt.Printf("generateRustLiteral LocalConstant %s %s\n", idCtx.Constant.Name, underlyingType.Name)
 			name = strings.ToUpper(idCtx.Constant.Name)
+			if g.isBorrowed(underlyingType) {
+				name = fmt.Sprintf("%s.clone()", name)
+			}
 		case parser.LocalEnum:
 			name = fmt.Sprintf("%s::%s", typeName(idCtx.Enum.Name), title(strings.ToLower(idCtx.EnumValue.Name)))
 		case parser.IncludeConstant:
@@ -257,7 +278,6 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 			panic(fmt.Sprintf("The Identifier %s has unexpected type %d", identifier, idCtx.Type))
 		}
 	} else {
-		underlyingType := g.Frugal.UnderlyingType(t)
 		if underlyingType.IsPrimitive() || underlyingType.IsContainer() {
 			switch underlyingType.Name {
 			case "bool", "i8", "byte", "i16", "i32", "i64", "double":
@@ -425,7 +445,7 @@ func (g *Generator) GenerateEnum(enum *parser.Enum) error {
 	// from_i32 method
 	buffer.WriteString(fmt.Sprintf(
 		`pub fn from_i32(i: i32) -> thrift::Result<%s> {
-			 match i{
+			 match i {
 				 `,
 		eName))
 	for _, v := range enum.Values {
@@ -604,15 +624,23 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 		fieldName := methodName(f.Name)
 		fType := g.Frugal.UnderlyingType(f.Type)
 		if f.Modifier == parser.Required {
-			buffer.WriteString(fmt.Sprintf("let %s = self.%s;\n", fieldName, fieldName))
+			borrow := ""
+			if g.isBorrowed(fType) {
+				borrow = "&"
+			}
+			buffer.WriteString(fmt.Sprintf("let %s = %sself.%s;\n", fieldName, borrow, fieldName))
 		} else {
+			maybeRefFieldName := fieldName
+			if g.isBorrowed(fType) {
+				maybeRefFieldName = fmt.Sprintf("ref %s", fieldName)
+			}
 			buffer.WriteString(fmt.Sprintf(
 				`let %s = match self.%s {
 					 Some(%s) => %s,
 					 None => return Ok(()),
 				 };
 			`,
-				fieldName, fieldName, fieldName, fieldName,
+				fieldName, fieldName, maybeRefFieldName, fieldName,
 			))
 		}
 		buffer.WriteString(fmt.Sprintf(
@@ -624,7 +652,7 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 			`,
 			f.Name, g.ttypeToEnum(fType), f.ID,
 		))
-		g.generateFieldWriteDefinition(&buffer, fieldName, fType)
+		g.generateFieldWriteDefinition(&buffer, fieldName, fType, false)
 		buffer.WriteString(
 			`	oprot.write_field_end()
 			}
@@ -639,6 +667,13 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	return err
 }
 
+func (g *Generator) isBorrowed(t *parser.Type) bool {
+	if t.IsContainer() || g.Frugal.IsStruct(t) || g.Frugal.IsEnum(t) || t.Name == "binary" || t.Name == "string" {
+		return true
+	}
+	return false
+}
+
 func (g *Generator) generateFieldReadDefinition(buffer *bytes.Buffer, fieldName string, fType *parser.Type) {
 	if fType.IsPrimitive() {
 		fTypeName := fType.Name
@@ -648,7 +683,7 @@ func (g *Generator) generateFieldReadDefinition(buffer *bytes.Buffer, fieldName 
 		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_%s()?;\n", fieldName, fTypeName))
 	} else if g.Frugal.IsEnum(fType) {
 		eName := g.canonicalizeTypeName(fType)
-		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_i32().map(%s::from_i32)?;\n", fieldName, eName))
+		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_i32().and_then(%s::from_i32)?;\n", fieldName, eName))
 	} else if g.Frugal.IsUnion(fType) {
 		uName := g.canonicalizeTypeName(fType)
 		buffer.WriteString(fmt.Sprintf("let %s = %s::read(iprot)?;\n", fieldName, uName))
@@ -718,7 +753,7 @@ func (g *Generator) ttypeToEnum(t *parser.Type) string {
 	case "bool", "i16", "i32", "i64", "double", "string", "list", "set", "map":
 		return title(t.Name)
 	case "binary":
-		return "Bytes"
+		return "String"
 	}
 
 	if g.Frugal.IsEnum(t) {
@@ -728,22 +763,19 @@ func (g *Generator) ttypeToEnum(t *parser.Type) string {
 	return "Struct"
 }
 
-func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName string, fType *parser.Type) {
+func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName string, fType *parser.Type, borrowed bool) {
 	if fType.IsPrimitive() {
 		varName := fieldName
 		fTypeName := fType.Name
-		if fType.Name == "string" || fType.Name == "binary" {
-			if fTypeName == "binary" {
-				fTypeName = "bytes"
-			}
-			varName = fmt.Sprintf("&%s", varName)
+		if borrowed && fTypeName != "binary" && fTypeName != "string" {
+			varName = fmt.Sprintf("*%s", varName)
 		}
 		if fTypeName == "binary" {
 			fTypeName = "bytes"
 		}
 		buffer.WriteString(fmt.Sprintf("oprot.write_%s(%s)?;\n", fTypeName, varName))
 	} else if g.Frugal.IsEnum(fType) {
-		buffer.WriteString(fmt.Sprintf("oprot.write_i32(%s as i32)?;\n", fieldName))
+		buffer.WriteString(fmt.Sprintf("oprot.write_i32(%s.clone() as i32)?;\n", fieldName))
 	} else if fType.IsCustom() {
 		buffer.WriteString(fmt.Sprintf("%s.write(oprot)?;\n", fieldName))
 	} else if fType.Name == "list" {
@@ -758,7 +790,7 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 			 `,
 			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
 		))
-		g.generateFieldWriteDefinition(buffer, itemName, vType)
+		g.generateFieldWriteDefinition(buffer, itemName, vType, true)
 		buffer.WriteString(
 			`}
 			 oprot.write_list_end()?;
@@ -775,7 +807,7 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 			 `,
 			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
 		))
-		g.generateFieldWriteDefinition(buffer, itemName, vType)
+		g.generateFieldWriteDefinition(buffer, itemName, vType, true)
 		buffer.WriteString(
 			`}
 			 oprot.write_set_end()?;
@@ -787,16 +819,16 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 		vType := g.Frugal.UnderlyingType(fType.ValueType)
 		buffer.WriteString(fmt.Sprintf(
 			`oprot.write_map_begin(&thrift::protocol::TMapIdentifier {
-				key_type: thrift::protocol::TType::%s,
-				value_type: thrift::protocol::TType::%s,
+				key_type: Some(thrift::protocol::TType::%s),
+				value_type: Some(thrift::protocol::TType::%s),
 				size: %s.len() as i32,
 			 })?;
 			 for (%s, %s) in %s {
 			 `,
 			g.ttypeToEnum(kType), g.ttypeToEnum(vType), fieldName, keyname, valuename, fieldName,
 		))
-		g.generateFieldWriteDefinition(buffer, keyname, kType)
-		g.generateFieldWriteDefinition(buffer, valuename, vType)
+		g.generateFieldWriteDefinition(buffer, keyname, kType, true)
+		g.generateFieldWriteDefinition(buffer, valuename, vType, true)
 		buffer.WriteString(
 			`}
         	 oprot.write_map_end()?;
@@ -931,7 +963,7 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier{
 				 name: %q.into(),
 			 })?;
-			 match *self {
+			 match self {
 			`,
 		union.Name,
 	))
@@ -940,7 +972,7 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 		fieldName := methodName(f.Name)
 		buffer.WriteString(fmt.Sprintf("%s::%s(%s) => {\n", uName, variant, fieldName))
 		fType := g.Frugal.UnderlyingType(f.Type)
-		g.generateFieldWriteDefinition(&buffer, fieldName, fType)
+		g.generateFieldWriteDefinition(&buffer, fieldName, fType, true)
 		buffer.WriteString("}")
 	}
 	buffer.WriteString(
@@ -981,7 +1013,12 @@ func (g *Generator) GenerateTypesImports(file *os.File) error {
 
 func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) error {
 	// TODO: Handle other imports?
-	_, err := file.WriteString("use super::*;\n")
+	_, err := file.WriteString(
+		`use frugal::context::FContext;
+		 use thrift;
+		
+		`,
+	)
 	return err
 }
 
