@@ -1263,7 +1263,8 @@ impl EventWrapper {
     where
         T: thrift::protocol::TInputProtocol,
     {
-        let a_union = TestingUnions::read(iprot)?;
+        let mut a_union = TestingUnions::AnID(0);
+        a_union.read(iprot)?;
         self.a_union = Some(a_union);
         Ok(())
     }
@@ -1747,77 +1748,103 @@ pub enum TestingUnions {
 }
 
 impl TestingUnions {
-    pub fn read<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         iprot.read_struct_begin()?;
-        let mut testing_unions = None;
+        let mut is_set = false;
         loop {
             let field_id = iprot.read_field_begin()?;
             if field_id.field_type == thrift::protocol::TType::Stop {
                 break;
             };
-            if let Some(_) = testing_unions {
+            if is_set {
                 return Err(thrift::new_protocol_error(
                     thrift::ProtocolErrorKind::InvalidData,
                     "TestingUnions read union: exactly one field must be set.",
                 ));
             };
             match field_id.id {
-                Some(1) => testing_unions = Some(Self::read_field_1(iprot)?),
-                Some(2) => testing_unions = Some(Self::read_field_2(iprot)?),
-                Some(3) => testing_unions = Some(Self::read_field_3(iprot)?),
-                Some(4) => testing_unions = Some(Self::read_field_4(iprot)?),
-                Some(5) => testing_unions = Some(Self::read_field_5(iprot)?),
-                Some(6) => testing_unions = Some(Self::read_field_6(iprot)?),
-                Some(7) => testing_unions = Some(Self::read_field_7(iprot)?),
+                Some(1) => {
+                    self.read_field_1(iprot)?;
+                    is_set = true;
+                }
+                Some(2) => {
+                    self.read_field_2(iprot)?;
+                    is_set = true;
+                }
+                Some(3) => {
+                    self.read_field_3(iprot)?;
+                    is_set = true;
+                }
+                Some(4) => {
+                    self.read_field_4(iprot)?;
+                    is_set = true;
+                }
+                Some(5) => {
+                    self.read_field_5(iprot)?;
+                    is_set = true;
+                }
+                Some(6) => {
+                    self.read_field_6(iprot)?;
+                    is_set = true;
+                }
+                Some(7) => {
+                    self.read_field_7(iprot)?;
+                    is_set = true;
+                }
                 _ => iprot.skip(field_id.field_type)?,
             };
             iprot.read_field_end()?;
         }
         iprot.read_struct_end()?;
-        testing_unions.ok_or_else(|| {
-            thrift::new_protocol_error(
+        if !is_set {
+            return Err(thrift::new_protocol_error(
                 thrift::ProtocolErrorKind::InvalidData,
                 "no field for union was sent",
-            )
-        })
+            ));
+        };
+        Ok(())
     }
 
-    fn read_field_1<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_1<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let an_id = iprot.read_i64()?;
-        Ok(TestingUnions::AnID(an_id))
+        *self = TestingUnions::AnID(an_id);
+        Ok(())
     }
 
-    fn read_field_2<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_2<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let a_string = iprot.read_string()?;
-        Ok(TestingUnions::AString(a_string))
+        *self = TestingUnions::AString(a_string);
+        Ok(())
     }
 
-    fn read_field_3<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_3<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let someotherthing = iprot.read_i32()?;
-        Ok(TestingUnions::Someotherthing(someotherthing))
+        *self = TestingUnions::Someotherthing(someotherthing);
+        Ok(())
     }
 
-    fn read_field_4<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_4<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let an_int16 = iprot.read_i16()?;
-        Ok(TestingUnions::AnInt16(an_int16))
+        *self = TestingUnions::AnInt16(an_int16);
+        Ok(())
     }
 
-    fn read_field_5<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_5<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
@@ -1829,23 +1856,26 @@ impl TestingUnions {
             requests.insert(requests_key, requests_value);
         }
         iprot.read_map_end()?;
-        Ok(TestingUnions::Requests(requests))
+        *self = TestingUnions::Requests(requests);
+        Ok(())
     }
 
-    fn read_field_6<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_6<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let bin_field_in_union = iprot.read_bytes()?;
-        Ok(TestingUnions::BinFieldInUnion(bin_field_in_union))
+        *self = TestingUnions::BinFieldInUnion(bin_field_in_union);
+        Ok(())
     }
 
-    fn read_field_7<T>(iprot: &mut T) -> thrift::Result<TestingUnions>
+    fn read_field_7<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         T: thrift::protocol::TInputProtocol,
     {
         let depr = iprot.read_bool()?;
-        Ok(TestingUnions::Depr(depr))
+        *self = TestingUnions::Depr(depr);
+        Ok(())
     }
 
     pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>

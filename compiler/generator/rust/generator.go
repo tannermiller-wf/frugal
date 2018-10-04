@@ -255,7 +255,6 @@ func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optio
 		idCtx := g.Frugal.ContextFromIdentifier(identifier)
 		switch idCtx.Type {
 		case parser.LocalConstant:
-			fmt.Printf("generateRustLiteral LocalConstant %s %s\n", idCtx.Constant.Name, underlyingType.Name)
 			name = strings.ToUpper(idCtx.Constant.Name)
 			if g.isBorrowed(underlyingType) {
 				name = fmt.Sprintf("%s.clone()", name)
@@ -685,8 +684,13 @@ func (g *Generator) generateFieldReadDefinition(buffer *bytes.Buffer, fieldName 
 		eName := g.canonicalizeTypeName(fType)
 		buffer.WriteString(fmt.Sprintf("let %s = iprot.read_i32().and_then(%s::from_i32)?;\n", fieldName, eName))
 	} else if g.Frugal.IsUnion(fType) {
-		uName := g.canonicalizeTypeName(fType)
-		buffer.WriteString(fmt.Sprintf("let %s = %s::read(iprot)?;\n", fieldName, uName))
+		//uName := g.canonicalizeTypeName(fType)
+		buffer.WriteString(fmt.Sprintf(
+			`let mut %s = %s;
+			 %s.read(iprot)?;
+			`,
+			fieldName, g.zeroValue(fType), fieldName,
+		))
 	} else if fType.IsCustom() {
 		tName := g.canonicalizeTypeName(fType)
 		buffer.WriteString(fmt.Sprintf(
@@ -859,7 +863,8 @@ func (g *Generator) zeroValue(t *parser.Type) string {
 	if g.Frugal.IsUnion(t) {
 		u := g.Frugal.FindUnion(t)
 		uv := u.Fields[0]
-		return fmt.Sprintf("%s::%s(%s)", g.toRustType(t, false), typeName(uv.Name), g.zeroValue(uv.Type))
+		uvt := g.Frugal.UnderlyingType(uv.Type)
+		return fmt.Sprintf("%s::%s(%s)", g.toRustType(t, false), typeName(uv.Name), g.zeroValue(uvt))
 	} else if g.Frugal.IsStruct(t) {
 		return fmt.Sprintf("%s::new()", typeName(t.Name))
 	} else if g.Frugal.IsEnum(t) {
@@ -868,7 +873,7 @@ func (g *Generator) zeroValue(t *parser.Type) string {
 		return fmt.Sprintf("%s::%s", g.toRustType(t, false), title(strings.ToLower(ev.Name)))
 	}
 
-	panic("cannot generate zero value for unrecognized type")
+	panic(fmt.Sprintf("cannot generate zero value for unrecognized type: %s", t.Name))
 }
 
 func (g *Generator) GenerateUnion(union *parser.Struct) error {
@@ -889,30 +894,36 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", uName))
 
 	// read methods
-	varName := methodName(uName)
 	buffer.WriteString(fmt.Sprintf(
-		`pub fn read<T>(iprot: &mut T) -> thrift::Result<%s>
+		`pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     	 where
     	     T: thrift::protocol::TInputProtocol,
     	 {
     	     iprot.read_struct_begin()?;
-    	     let mut %s = None;
+    	     let mut is_set = false;
     	     loop {
     	         let field_id = iprot.read_field_begin()?;
     	         if field_id.field_type == thrift::protocol::TType::Stop {
     	             break;
     	         };
-    	         if let Some(_) = %s {
+    	         if is_set {
     	             return Err(thrift::new_protocol_error(
     	                 thrift::ProtocolErrorKind::InvalidData,
     	                 "%s read union: exactly one field must be set.",
     	             ));
     	         };
     	         match field_id.id {`,
-		uName, varName, varName, uName,
+		uName,
 	))
 	for _, f := range union.Fields {
-		buffer.WriteString(fmt.Sprintf("Some(%d) => %s = Some(Self::read_field_%d(iprot)?),\n", f.ID, varName, f.ID))
+		buffer.WriteString(fmt.Sprintf(
+			`Some(%d) => {
+				self.read_field_%d(iprot)?;
+				is_set = true;
+			}
+			`,
+			f.ID, f.ID,
+		))
 	}
 	buffer.WriteString(fmt.Sprintf(
 		`	 		_ => iprot.skip(field_id.field_type)?,
@@ -920,12 +931,13 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 				iprot.read_field_end()?;
 			 }
 			 iprot.read_struct_end()?;
-			 testing_unions.ok_or_else(|| {
-				 thrift::new_protocol_error(
+			 if !is_set {
+				 return Err(thrift::new_protocol_error(
 					 thrift::ProtocolErrorKind::InvalidData,
 					 "no field for union was sent",
-				 )
-			 })
+				 ));
+			 };
+			 Ok(())
 		 }
 		 
 		 `))
@@ -933,19 +945,20 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 	// field read methods
 	for _, f := range union.Fields {
 		buffer.WriteString(fmt.Sprintf(
-			`fn read_field_%d<T>(iprot: &mut T) -> thrift::Result<%s>
+			`fn read_field_%d<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     	 	 where
     	 	     T: thrift::protocol::TInputProtocol,
     	 	 {
 			 `,
-			f.ID, uName,
+			f.ID,
 		))
 		variant := typeName(f.Name)
 		fieldName := methodName(f.Name)
 		fType := g.Frugal.UnderlyingType(f.Type)
 		g.generateFieldReadDefinition(&buffer, fieldName, fType)
 		buffer.WriteString(fmt.Sprintf(
-			`	Ok(%s::%s(%s))
+			`	*self = %s::%s(%s);
+				Ok(())
 			}
 
 			`,
