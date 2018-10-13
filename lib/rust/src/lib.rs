@@ -10,11 +10,15 @@ extern crate log;
 extern crate mime;
 extern crate thrift;
 extern crate tokio_core;
+extern crate tower_service;
 extern crate uuid;
 
 pub mod context;
+pub mod errors;
 pub mod processor;
 pub mod protocol;
+pub mod provider;
+pub mod service;
 pub mod transport;
 
 mod util;

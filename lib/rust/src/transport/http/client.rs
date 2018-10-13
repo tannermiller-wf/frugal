@@ -24,7 +24,7 @@ pub struct FHttpTransportBuilder {
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
     request_headers: Option<Headers>,
-    get_request_headers: Option<Box<Fn(&FContext) -> Headers>>,
+    get_request_headers: Option<Box<dyn Fn(&FContext) -> Headers>>,
 }
 
 impl FHttpTransportBuilder {
@@ -57,7 +57,7 @@ impl FHttpTransportBuilder {
 
     pub fn with_request_headers_from_fcontext(
         mut self,
-        get_request_headers: Box<Fn(&FContext) -> Headers>,
+        get_request_headers: Box<dyn Fn(&FContext) -> Headers>,
     ) -> Self {
         self.get_request_headers = Some(get_request_headers);
         self
@@ -83,7 +83,7 @@ pub struct FHttpTransport {
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
     request_headers: Option<Headers>,
-    get_request_headers: Option<Box<Fn(&FContext) -> Headers>>,
+    get_request_headers: Option<Box<dyn Fn(&FContext) -> Headers>>,
 }
 
 impl FTransport for FHttpTransport {
@@ -95,7 +95,7 @@ impl FTransport for FHttpTransport {
         &mut self,
         ctx: &FContext,
         payload: &[u8],
-    ) -> Option<thrift::Result<Box<TReadTransport>>> {
+    ) -> Option<thrift::Result<Box<dyn TReadTransport>>> {
         // TODO: isOpen check goes here if needed
 
         if payload.len() == 4 {

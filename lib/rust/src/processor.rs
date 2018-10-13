@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::error::Error;
 
 use thrift;
@@ -6,9 +5,6 @@ use thrift::protocol::{TInputProtocol, TOutputProtocol};
 
 use context::FContext;
 use protocol::{FInputProtocol, FOutputProtocol};
-
-// TODO: Figure out middleware, seems hard without reflection, look at adapting frugal to tower-rs
-//pub trait ServiceMiddleware {}
 
 // Adding middleware, processor functions, and annotations is static at startup time (in generated
 // code) so probably don't need these explicit here. Maybe have a holder struct. They will be called
@@ -41,14 +37,13 @@ pub trait FProcessorFunction {
     //fn annotations(&self) -> &BTreeMap<String, BTreeMap<String, String>>;
 }
 
-// TODO: This goes away, replaced by actual generated code
 pub trait FBaseProcessor {
-    fn process_map(&self) -> &BTreeMap<String, Box<FProcessorFunction>>;
+    fn processor(&self, name: &str) -> Option<&dyn FProcessorFunction>;
     //fn process_map_mut(&mut self) -> BTreeMap<String, Box<FProcessorFunction>>;
     //fn annotations(&self) -> &BTreeMap<String, BTreeMap<String, String>>;
 }
 
-// TODO: this goes into generated code
+// TODO: This is now in the generated code
 impl<T> FProcessor for T
 where
     T: FBaseProcessor,
@@ -61,7 +56,7 @@ where
         let mut ctx = iprot.read_request_header()?;
         let name = iprot.read_message_begin().map(|tmid| tmid.name)?;
 
-        if let Some(processor) = self.process_map().get(&name) {
+        if let Some(processor) = self.processor(&name) {
             match processor.process(&mut ctx, iprot, oprot) {
                 Err(thrift::Error::User(err)) => error!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
                 Err(err) => error!("frugal: user handler code returned unhandled error on request with correlation id {}: {}", ctx.correlation_id(), err.description()),
@@ -112,10 +107,10 @@ mod test {
     use super::*;
     use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
 
-    struct MockProcessor(BTreeMap<String, Box<FProcessorFunction>>);
+    struct MockProcessor(BTreeMap<String, Box<dyn FProcessorFunction>>);
 
     impl FBaseProcessor for MockProcessor {
-        fn process_map(&self) -> &BTreeMap<String, Box<FProcessorFunction>> {
+        fn process_map(&self) -> &BTreeMap<String, Box<dyn FProcessorFunction>> {
             &self.0
         }
     }
@@ -155,7 +150,7 @@ mod test {
         let mut process_map = BTreeMap::new();
         process_map.insert(
             "ping".to_string(),
-            Box::new(MockProcessorFunction) as Box<FProcessorFunction>,
+            Box::new(MockProcessorFunction) as Box<dyn FProcessorFunction>,
         );
         let processor = MockProcessor(process_map);
         let input_transport = Box::new(Cursor::new(PING_FRAME));
@@ -190,7 +185,7 @@ mod test {
         let mut process_map = BTreeMap::new();
         process_map.insert(
             "ping".to_string(),
-            Box::new(ErrorMockProcessorFunction) as Box<FProcessorFunction>,
+            Box::new(ErrorMockProcessorFunction) as Box<dyn FProcessorFunction>,
         );
         let processor = MockProcessor(process_map);
         let input_transport = Box::new(Cursor::new(PING_FRAME));
@@ -216,7 +211,7 @@ mod test {
         let mut process_map = BTreeMap::new();
         process_map.insert(
             "ping".to_string(),
-            Box::new(MockProcessorFunction) as Box<FProcessorFunction>,
+            Box::new(MockProcessorFunction) as Box<dyn FProcessorFunction>,
         );
         let processor = MockProcessor(process_map);
         let input_transport = Box::new(ReadMockTransport);

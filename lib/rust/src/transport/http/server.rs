@@ -77,7 +77,7 @@ impl Service for FHttpService {
     type Request = Request;
     type Response = Response;
     type Error = hyper::Error;
-    type Future = Box<Future<Item = Self::Response, Error = Self::Error>>;
+    type Future = Box<dyn Future<Item = Self::Response, Error = Self::Error>>;
 
     fn call(&self, req: Request) -> Self::Future {
         // validate we have at least enough for a frame header

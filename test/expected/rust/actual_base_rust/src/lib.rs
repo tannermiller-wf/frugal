@@ -8,6 +8,10 @@ extern crate frugal;
 extern crate thrift;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
+extern crate futures;
+extern crate tower_service;
 
 #[allow(unused)]
 use std::collections::{BTreeMap, BTreeSet};

@@ -17,10 +17,10 @@ const PROTOCOL_V0: u8 = 0x00;
 
 // This wraps the underlying transport in a thread safe way, so we can still access it after it
 // is passed into the protocol factory.
-struct TReadTransportWrapper(Arc<Mutex<Box<TReadTransport + Send>>>);
+struct TReadTransportWrapper(Arc<Mutex<Box<dyn TReadTransport + Send>>>);
 
 impl TReadTransportWrapper {
-    fn wrap(tr_arc: &Arc<Mutex<Box<TReadTransport + Send>>>) -> Box<TReadTransport + Send> {
+    fn wrap(tr_arc: &Arc<Mutex<Box<dyn TReadTransport + Send>>>) -> Box<dyn TReadTransport + Send> {
         Box::new(TReadTransportWrapper(Arc::clone(&tr_arc)))
     }
 }
@@ -33,10 +33,12 @@ impl io::Read for TReadTransportWrapper {
 
 // This wraps the underlying transport in a thread safe way, so we can still access it after it
 // is passed into the protocol factory.
-struct TWriteTransportWrapper(Arc<Mutex<Box<TWriteTransport + Send>>>);
+struct TWriteTransportWrapper(Arc<Mutex<Box<dyn TWriteTransport + Send>>>);
 
 impl TWriteTransportWrapper {
-    fn wrap(tr_arc: &Arc<Mutex<Box<TWriteTransport + Send>>>) -> Box<TWriteTransport + Send> {
+    fn wrap(
+        tr_arc: &Arc<Mutex<Box<dyn TWriteTransport + Send>>>,
+    ) -> Box<dyn TWriteTransport + Send> {
         Box::new(TWriteTransportWrapper(Arc::clone(&tr_arc)))
     }
 }
@@ -153,8 +155,8 @@ impl ProtocolMarshaler {
 }
 
 pub struct FInputProtocol {
-    transport: Box<TReadTransport + Send>,
-    protocol: Box<TInputProtocol + Send>,
+    transport: Box<dyn TReadTransport + Send>,
+    protocol: Box<dyn TInputProtocol + Send>,
 }
 
 impl FInputProtocol {
@@ -300,17 +302,17 @@ impl TInputProtocol for FInputProtocol {
 }
 
 pub struct FInputProtocolFactory {
-    input_proto_factory: Box<TInputProtocolFactory>,
+    input_proto_factory: Box<dyn TInputProtocolFactory>,
 }
 
 impl FInputProtocolFactory {
-    pub fn new(input_proto_factory: Box<TInputProtocolFactory>) -> Self {
+    pub fn new(input_proto_factory: Box<dyn TInputProtocolFactory>) -> Self {
         FInputProtocolFactory {
             input_proto_factory,
         }
     }
 
-    pub fn get_protocol(&self, tr: Box<TReadTransport + Send>) -> FInputProtocol {
+    pub fn get_protocol(&self, tr: Box<dyn TReadTransport + Send>) -> FInputProtocol {
         let tr_arc = Arc::new(Mutex::new(tr));
 
         FInputProtocol {
@@ -323,8 +325,8 @@ impl FInputProtocolFactory {
 }
 
 pub struct FOutputProtocol {
-    transport: Box<TWriteTransport + Send>,
-    protocol: Box<TOutputProtocol + Send>,
+    transport: Box<dyn TWriteTransport + Send>,
+    protocol: Box<dyn TOutputProtocol + Send>,
 }
 
 impl FOutputProtocol {
@@ -484,17 +486,17 @@ impl TOutputProtocol for FOutputProtocol {
 }
 
 pub struct FOutputProtocolFactory {
-    output_proto_factory: Box<TOutputProtocolFactory>,
+    output_proto_factory: Box<dyn TOutputProtocolFactory>,
 }
 
 impl FOutputProtocolFactory {
-    pub fn new(output_proto_factory: Box<TOutputProtocolFactory>) -> Self {
+    pub fn new(output_proto_factory: Box<dyn TOutputProtocolFactory>) -> Self {
         FOutputProtocolFactory {
             output_proto_factory,
         }
     }
 
-    pub fn get_protocol(&self, tr: Box<TWriteTransport + Send>) -> FOutputProtocol {
+    pub fn get_protocol(&self, tr: Box<dyn TWriteTransport + Send>) -> FOutputProtocol {
         let tr_arc = Arc::new(Mutex::new(tr));
 
         FOutputProtocol {
