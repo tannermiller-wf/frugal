@@ -13,4 +13,4 @@ mod client;
 pub use self::client::{FHttpTransport, FHttpTransportBuilder};
 
 mod server;
-pub use self::server::FHttpService;
+//pub use self::server::FHttpService;

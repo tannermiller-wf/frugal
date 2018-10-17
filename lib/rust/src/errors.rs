@@ -17,11 +17,11 @@ where
     S: Into<String>,
 {
     oprot.write_response_header(ctx)?;
-    oprot.write_message_begin(&thrift::protocol::TMessageIdentifier {
-        name: method.into(),
-        message_type: thrift::protocol::TMessageType::Exception,
-        sequence_number: 0,
-    })?;
+    oprot.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+        method,
+        thrift::protocol::TMessageType::Exception,
+        0,
+    ))?;
     thrift::Error::write_application_error_to_out_protocol(err, oprot)?;
     oprot.write_message_end()?;
     oprot.flush()

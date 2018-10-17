@@ -16,3 +16,4 @@ thrift = "0.0.4"
 tokio-core = "0.1"
 uuid = { version = "0.7", features = ["v4"] }
 tower-service = "0.1"
+tower-web = "0.3"

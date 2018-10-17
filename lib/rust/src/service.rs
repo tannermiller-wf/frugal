@@ -1,56 +1,59 @@
-use futures::future::FutureResult;
-use thrift;
-use tower_service::Service;
-
 use context::FContext;
 
-// TODO: Figure out middleware, seems hard without reflection, look at adapting frugal to tower-rs
-// Put all things we might want to get in here. This is intended to be a bound on a
-// tower_service::Service::Request
 pub trait Request {
-    fn context(&mut self) -> &mut FContext; // I'm not sure if tower lets you mutate the request. But I think it would almost half to
+    fn context(&mut self) -> &mut FContext;
     fn method_name(&self) -> &'static str; // TODO: Is static here fine? Would it ever change?
 }
 
-pub struct Method<S, Req, Res>
-where
-    Req: Request,
-    S: Service<
-        Request = Req,
-        Response = Res,
-        Error = thrift::Error,
-        Future = FutureResult<Res, thrift::Error>,
-    >,
-{
-    service: S,
-}
-
-#[allow(dead_code)]
-mod example {
+pub mod example {
     use super::Request;
-    use futures::{Async, Poll};
+    use futures::Poll;
     use tower_service::Service;
+    use tower_web::middleware::Middleware;
 
-    pub struct InsertHeader<T> {
-        inner: T,
+    pub struct InsertHeaderMiddleware {
         key: String,
         value: String,
     }
 
-    impl<T> InsertHeader<T> {
-        pub fn new<S>(inner: T, key: S, value: S) -> InsertHeader<T>
+    impl InsertHeaderMiddleware {
+        pub fn new<S>(key: S, value: S) -> InsertHeaderMiddleware
         where
             S: Into<String>,
         {
-            InsertHeader {
-                inner: inner,
+            InsertHeaderMiddleware {
                 key: key.into(),
                 value: value.into(),
             }
         }
     }
 
-    impl<T> Service for InsertHeader<T>
+    impl<S> Middleware<S> for InsertHeaderMiddleware
+    where
+        S: Service,
+        S::Request: Request,
+    {
+        type Request = S::Request;
+        type Response = S::Response;
+        type Error = S::Error;
+        type Service = InsertHeaderService<S>;
+
+        fn wrap(&self, service: S) -> InsertHeaderService<S> {
+            InsertHeaderService {
+                key: self.key.clone(),
+                value: self.value.clone(),
+                inner: service,
+            }
+        }
+    }
+
+    pub struct InsertHeaderService<T> {
+        inner: T,
+        key: String,
+        value: String,
+    }
+
+    impl<T> Service for InsertHeaderService<T>
     where
         T: Service,
         T::Request: Request,
@@ -61,7 +64,7 @@ mod example {
         type Future = T::Future;
 
         fn poll_ready(&mut self) -> Poll<(), Self::Error> {
-            Ok(Async::Ready(()))
+            self.inner.poll_ready()
         }
 
         fn call(&mut self, mut req: Self::Request) -> Self::Future {

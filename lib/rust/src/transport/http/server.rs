@@ -1,4 +1,4 @@
-use std::error::Error;
+/*use std::error::Error;
 use std::io::{self, Cursor};
 use std::sync::{Arc, Mutex};
 
@@ -373,4 +373,4 @@ mod test {
         iprot.read_response_header(&mut out_ctx).unwrap();
         assert_eq!("bar", out_ctx.response_header("foo").unwrap());
     }
-}
+}*/

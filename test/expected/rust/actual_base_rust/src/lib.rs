@@ -12,6 +12,7 @@ extern crate lazy_static;
 extern crate log;
 extern crate futures;
 extern crate tower_service;
+extern crate tower_web;
 
 #[allow(unused)]
 use std::collections::{BTreeMap, BTreeSet};

@@ -11,6 +11,7 @@ extern crate mime;
 extern crate thrift;
 extern crate tokio_core;
 extern crate tower_service;
+extern crate tower_web;
 extern crate uuid;
 
 pub mod context;
