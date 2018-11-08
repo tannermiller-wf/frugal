@@ -1,4 +1,4 @@
-use std::io::Cursor;
+/*use std::io::Cursor;
 use std::str::from_utf8 as str_from_utf8;
 
 use base64;
@@ -267,4 +267,4 @@ impl FTransport for FHttpTransport {
     fn get_request_size_limit(&self) -> Option<usize> {
         self.request_size_limit
     }
-}
+}*/

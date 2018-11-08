@@ -1,11 +1,9 @@
 extern crate base64;
 extern crate byteorder;
 extern crate futures;
-#[macro_use]
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
-#[macro_use]
 extern crate log;
 extern crate mime;
 extern crate thrift;
@@ -14,6 +12,7 @@ extern crate tower_service;
 extern crate tower_web;
 extern crate uuid;
 
+pub mod buffer;
 pub mod context;
 pub mod errors;
 pub mod processor;

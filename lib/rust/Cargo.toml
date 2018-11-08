@@ -4,11 +4,11 @@ version = "0.1.0"
 authors = ["Tanner Miller <tanner.miller+github@webfilings.com>"]
 
 [dependencies]
-base64 = "0.9"
+base64 = "0.10"
 byteorder = "1.2"
 futures = "0.1"
-hyper = "0.11"
-lazy_static = "1"
+hyper = "0.12"
+lazy_static = "1.2"
 log = "0.4"
 mime = "0.3"
 rand = "0.5"
