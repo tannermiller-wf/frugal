@@ -1,6 +1,6 @@
 [package]
 name = "frugal"
-version = "0.1.0"
+version = "2.23.0"
 authors = ["Tanner Miller <tanner.miller+github@webfilings.com>"]
 
 [dependencies]
