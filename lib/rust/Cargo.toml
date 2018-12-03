@@ -12,7 +12,7 @@ lazy_static = "1.2"
 log = "0.4"
 mime = "0.3"
 rand = "0.5"
-thrift = "0.0.4"
+thrift = { path = "/home/tanner/code/thrift/lib/rs" }
 tokio-core = "0.1"
 uuid = { version = "0.7", features = ["v4"] }
 tower-service = "0.1"

@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::io::{self, Write};
-use std::sync::{Arc, Mutex};
 
 use byteorder::{BigEndian, WriteBytesExt};
 use thrift;
 use thrift::protocol::{
-    TInputProtocol, TInputProtocolFactory, TOutputProtocol, TOutputProtocolFactory,
+    TCompactInputProtocol, TCompactInputProtocolFactory, TCompactOutputProtocol,
+    TCompactOutputProtocolFactory, TInputProtocol, TOutputProtocol,
 };
 use thrift::transport::{TReadTransport, TWriteTransport};
 
@@ -14,44 +14,6 @@ use context::{self, FContext};
 use util::{read_exact, read_size};
 
 const PROTOCOL_V0: u8 = 0x00;
-
-// This wraps the underlying transport in a thread safe way, so we can still access it after it
-// is passed into the protocol factory.
-struct TReadTransportWrapper(Arc<Mutex<Box<dyn TReadTransport + Send>>>);
-
-impl TReadTransportWrapper {
-    fn wrap(tr_arc: &Arc<Mutex<Box<dyn TReadTransport + Send>>>) -> Box<dyn TReadTransport + Send> {
-        Box::new(TReadTransportWrapper(Arc::clone(&tr_arc)))
-    }
-}
-
-impl io::Read for TReadTransportWrapper {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().read(buf)
-    }
-}
-
-// This wraps the underlying transport in a thread safe way, so we can still access it after it
-// is passed into the protocol factory.
-struct TWriteTransportWrapper(Arc<Mutex<Box<dyn TWriteTransport + Send>>>);
-
-impl TWriteTransportWrapper {
-    fn wrap(
-        tr_arc: &Arc<Mutex<Box<dyn TWriteTransport + Send>>>,
-    ) -> Box<dyn TWriteTransport + Send> {
-        Box::new(TWriteTransportWrapper(Arc::clone(&tr_arc)))
-    }
-}
-
-impl io::Write for TWriteTransportWrapper {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.lock().unwrap().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.lock().unwrap().flush()
-    }
-}
 
 enum ProtocolMarshaler {
     V0,
@@ -154,12 +116,18 @@ impl ProtocolMarshaler {
     }
 }
 
-pub struct FInputProtocol {
-    transport: Box<dyn TReadTransport + Send>,
-    protocol: Box<dyn TInputProtocol + Send>,
+pub struct FInputProtocol<R>
+where
+    R: TReadTransport,
+{
+    transport: R,
+    factory: TCompactInputProtocolFactory,
 }
 
-impl FInputProtocol {
+impl<R> FInputProtocol<R>
+where
+    R: TReadTransport,
+{
     pub fn read_request_header(&mut self) -> thrift::Result<FContext> {
         let headers = read_exact(&mut self.transport, 1)
             .and_then(|buf| ProtocolMarshaler::get(buf[0]))
@@ -201,9 +169,25 @@ impl FInputProtocol {
 
         Ok(())
     }
+
+    pub fn t_protocol_proxy<'a>(&'a mut self) -> FInputProtocolProxy<&'a mut R> {
+        FInputProtocolProxy {
+            protocol: self.factory.create(&mut self.transport),
+        }
+    }
 }
 
-impl TInputProtocol for FInputProtocol {
+pub struct FInputProtocolProxy<R>
+where
+    R: TReadTransport,
+{
+    protocol: TCompactInputProtocol<R>,
+}
+
+impl<R> TInputProtocol<R> for FInputProtocolProxy<R>
+where
+    R: TReadTransport,
+{
     fn read_message_begin(&mut self) -> thrift::Result<thrift::protocol::TMessageIdentifier> {
         self.protocol.read_message_begin()
     }
@@ -302,34 +286,39 @@ impl TInputProtocol for FInputProtocol {
 }
 
 pub struct FInputProtocolFactory {
-    input_proto_factory: Box<dyn TInputProtocolFactory>,
+    input_proto_factory: TCompactInputProtocolFactory,
 }
 
 impl FInputProtocolFactory {
-    pub fn new(input_proto_factory: Box<dyn TInputProtocolFactory>) -> Self {
+    pub fn new(input_proto_factory: TCompactInputProtocolFactory) -> Self {
         FInputProtocolFactory {
             input_proto_factory,
         }
     }
 
-    pub fn get_protocol(&self, tr: Box<dyn TReadTransport + Send>) -> FInputProtocol {
-        let tr_arc = Arc::new(Mutex::new(tr));
-
+    pub fn get_protocol<R>(&self, tr: R) -> FInputProtocol<R>
+    where
+        R: TReadTransport,
+    {
         FInputProtocol {
-            transport: TReadTransportWrapper::wrap(&tr_arc),
-            protocol: self
-                .input_proto_factory
-                .create(TReadTransportWrapper::wrap(&tr_arc)),
+            transport: tr,
+            factory: self.input_proto_factory.clone(),
         }
     }
 }
 
-pub struct FOutputProtocol {
-    transport: Box<dyn TWriteTransport + Send>,
-    protocol: Box<dyn TOutputProtocol + Send>,
+pub struct FOutputProtocol<W>
+where
+    W: TWriteTransport,
+{
+    transport: W,
+    factory: TCompactOutputProtocolFactory,
 }
 
-impl FOutputProtocol {
+impl<W> FOutputProtocol<W>
+where
+    W: TWriteTransport,
+{
     fn write_header(&mut self, header: &BTreeMap<String, String>) -> thrift::Result<()> {
         ProtocolMarshaler::V0
             .marshal_headers(header)
@@ -371,9 +360,25 @@ impl FOutputProtocol {
     pub fn write_response_header(&mut self, ctx: &FContext) -> thrift::Result<()> {
         self.write_header(ctx.response_headers())
     }
+
+    pub fn t_protocol_proxy<'a>(&'a mut self) -> FOutputProtocolProxy<&'a mut W> {
+        FOutputProtocolProxy {
+            protocol: self.factory.create(&mut self.transport),
+        }
+    }
 }
 
-impl TOutputProtocol for FOutputProtocol {
+pub struct FOutputProtocolProxy<W>
+where
+    W: TWriteTransport,
+{
+    protocol: TCompactOutputProtocol<W>,
+}
+
+impl<W> TOutputProtocol<W> for FOutputProtocolProxy<W>
+where
+    W: TWriteTransport,
+{
     fn write_message_begin(
         &mut self,
         identifier: &thrift::protocol::TMessageIdentifier,
@@ -486,24 +491,23 @@ impl TOutputProtocol for FOutputProtocol {
 }
 
 pub struct FOutputProtocolFactory {
-    output_proto_factory: Box<dyn TOutputProtocolFactory>,
+    output_proto_factory: TCompactOutputProtocolFactory,
 }
 
 impl FOutputProtocolFactory {
-    pub fn new(output_proto_factory: Box<dyn TOutputProtocolFactory>) -> Self {
+    pub fn new(output_proto_factory: TCompactOutputProtocolFactory) -> Self {
         FOutputProtocolFactory {
             output_proto_factory,
         }
     }
 
-    pub fn get_protocol(&self, tr: Box<dyn TWriteTransport + Send>) -> FOutputProtocol {
-        let tr_arc = Arc::new(Mutex::new(tr));
-
+    pub fn get_protocol<W>(&self, tr: W) -> FOutputProtocol<W>
+    where
+        W: TWriteTransport,
+    {
         FOutputProtocol {
-            transport: TWriteTransportWrapper::wrap(&tr_arc),
-            protocol: self
-                .output_proto_factory
-                .create(TWriteTransportWrapper::wrap(&tr_arc)),
+            transport: tr,
+            factory: self.output_proto_factory.clone(),
         }
     }
 }
@@ -514,7 +518,7 @@ mod test {
     use std::io::{self, Cursor, Write};
 
     use thrift;
-    use thrift::protocol::{TBinaryInputProtocolFactory, TBinaryOutputProtocolFactory};
+    use thrift::protocol::{TCompactInputProtocolFactory, TCompactOutputProtocolFactory};
 
     use super::*;
     use context::{FContext, CID_HEADER, OP_ID_HEADER};
@@ -532,8 +536,7 @@ mod test {
 
     #[test]
     fn test_input_protocol_read_request_header_missing_op_id() {
-        let input_prot_factory =
-            FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+        let input_prot_factory = FInputProtocolFactory::new(TCompactInputProtocolFactory::new());
         let input_transport = Box::new(Cursor::new(BASIC_FRAME));
         let mut f_input_protocol = input_prot_factory.get_protocol(input_transport);
         let result = f_input_protocol.read_request_header();
@@ -551,8 +554,7 @@ mod test {
 
     #[test]
     fn test_input_protocol_read_request_header_happy_path() {
-        let input_prot_factory =
-            FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+        let input_prot_factory = FInputProtocolFactory::new(TCompactInputProtocolFactory::new());
         let input_transport = Box::new(Cursor::new(FRUGAL_FRAME));
         let mut f_input_protocol = input_prot_factory.get_protocol(input_transport);
         let ctx = f_input_protocol.read_request_header().unwrap();
@@ -562,8 +564,7 @@ mod test {
 
     #[test]
     fn test_input_protocol_read_response_header_happy_path() {
-        let input_prot_factory =
-            FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+        let input_prot_factory = FInputProtocolFactory::new(TCompactInputProtocolFactory::new());
         let input_transport = Box::new(Cursor::new(BASIC_FRAME));
         let mut f_input_protocol = input_prot_factory.get_protocol(input_transport);
         let mut ctx = FContext::new(None);
@@ -586,7 +587,7 @@ mod test {
         }
 
         let output_protocol_factory =
-            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+            FOutputProtocolFactory::new(TCompactOutputProtocolFactory::new());
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
         let mut ctx = FContext::new(None);
@@ -622,7 +623,7 @@ mod test {
         }
 
         let output_protocol_factory =
-            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+            FOutputProtocolFactory::new(TCompactOutputProtocolFactory::new());
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
         let mut ctx = FContext::new(None);
@@ -677,7 +678,7 @@ mod test {
         }
 
         let output_protocol_factory =
-            FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+            FOutputProtocolFactory::new(TCompactOutputProtocolFactory::new());
         let output_transport = Box::new(MockTransport);
         let mut f_output_protocol = output_protocol_factory.get_protocol(output_transport);
         let mut ctx = FContext::new(None);
@@ -703,7 +704,7 @@ mod test {
             let test_file =
                 fs::File::create(WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH).unwrap();
             let output_protocol_factory =
-                FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+                FOutputProtocolFactory::new(TCompactOutputProtocolFactory::new());
             let mut f_output_protocol = output_protocol_factory.get_protocol(Box::new(test_file));
             f_output_protocol.write_request_header(&ctx).unwrap();
         }
@@ -712,7 +713,7 @@ mod test {
         let result = {
             let test_file = fs::File::open(WRITE_READ_REQUEST_HEADER_SYMMETRIC_FILE_PATH).unwrap();
             let input_prot_factory =
-                FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+                FInputProtocolFactory::new(TCompactInputProtocolFactory::new());
             let mut f_input_protocol = input_prot_factory.get_protocol(Box::new(test_file));
             f_input_protocol.read_request_header().unwrap()
         };
@@ -747,7 +748,7 @@ mod test {
             let test_file =
                 fs::File::create(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
             let output_protocol_factory =
-                FOutputProtocolFactory::new(Box::new(TBinaryOutputProtocolFactory::new()));
+                FOutputProtocolFactory::new(TCompactOutputProtocolFactory::new());
             let mut f_output_protocol = output_protocol_factory.get_protocol(Box::new(test_file));
             f_output_protocol.write_response_header(&ctx).unwrap();
         }
@@ -757,7 +758,7 @@ mod test {
             let mut result_ctx = FContext::new(Some("123"));
             let test_file = fs::File::open(WRITE_READ_RESPONSE_HEADER_SYMMETRIC_FILE_PATH).unwrap();
             let input_prot_factory =
-                FInputProtocolFactory::new(Box::new(TBinaryInputProtocolFactory::new()));
+                FInputProtocolFactory::new(TCompactInputProtocolFactory::new());
             let mut f_input_protocol = input_prot_factory.get_protocol(Box::new(test_file));
             f_input_protocol
                 .read_response_header(&mut result_ctx)

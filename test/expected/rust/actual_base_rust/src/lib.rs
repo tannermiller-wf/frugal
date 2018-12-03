@@ -56,9 +56,10 @@ impl Thing {
         }
     }
 
-    pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         iprot.read_struct_begin()?;
         loop {
@@ -76,27 +77,30 @@ impl Thing {
         iprot.read_struct_end()
     }
 
-    fn read_field_1<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    fn read_field_1<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         let an_id = iprot.read_i32()?;
         self.an_id = Some(an_id);
         Ok(())
     }
 
-    fn read_field_2<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    fn read_field_2<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         let a_string = iprot.read_string()?;
         self.a_string = Some(a_string);
         Ok(())
     }
 
-    pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
             name: "thing".into(),
@@ -107,9 +111,10 @@ impl Thing {
         oprot.write_struct_end()
     }
 
-    fn write_field_1<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    fn write_field_1<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         let an_id = match self.an_id {
             Some(an_id) => an_id,
@@ -124,9 +129,10 @@ impl Thing {
         oprot.write_field_end()
     }
 
-    fn write_field_2<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    fn write_field_2<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         let a_string = match self.a_string {
             Some(ref a_string) => a_string,
@@ -152,9 +158,10 @@ impl NestedThing {
         NestedThing { things: None }
     }
 
-    pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         iprot.read_struct_begin()?;
         loop {
@@ -171,9 +178,10 @@ impl NestedThing {
         iprot.read_struct_end()
     }
 
-    fn read_field_1<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    fn read_field_1<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         let list_id = iprot.read_list_begin()?;
         let mut things = Vec::with_capacity(list_id.size as usize);
@@ -187,9 +195,10 @@ impl NestedThing {
         Ok(())
     }
 
-    pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
             name: "nested_thing".into(),
@@ -199,9 +208,10 @@ impl NestedThing {
         oprot.write_struct_end()
     }
 
-    fn write_field_1<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    fn write_field_1<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         let things = match self.things {
             Some(ref things) => things,
@@ -232,9 +242,10 @@ impl ApiException {
         ApiException {}
     }
 
-    pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         iprot.read_struct_begin()?;
         loop {
@@ -250,9 +261,10 @@ impl ApiException {
         iprot.read_struct_end()
     }
 
-    pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+    pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TOutputProtocol,
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
     {
         oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
             name: "api_exception".into(),

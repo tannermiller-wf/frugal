@@ -10,10 +10,12 @@ use futures::future::{self, FutureResult};
 use futures::{Async, Future, Poll};
 use thrift;
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
+use thrift::transport::{TReadTransport, TWriteTransport};
 use tower_service::Service;
 use tower_web::middleware::{self, Middleware};
 use tower_web::util::Chain;
 
+use frugal::buffer::FMemoryOutputBuffer;
 use frugal::context::FContext;
 use frugal::errors;
 use frugal::processor::FProcessor;
@@ -28,7 +30,6 @@ pub trait FBaseFoo {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()>;
 }
 
-// TODO: client
 pub struct FBaseFooClient<S>
 where
     S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
@@ -54,15 +55,85 @@ where
             ctx.clone(),
             FBaseFooMethod::BasePing(FBaseFooPingArgs::new()),
         );
-        let result = self.service.call(request).wait()?;
+        match self.service.call(request).wait()? {
+            FBaseFooResponse::BasePing(_) => (),
+            // TODO: See if we can detect and avoid generating this branch
+            _ => panic!("FBaseFooClient::base_ping() recieved an incorrect response"),
+        };
         Ok(())
     }
 }
 
 pub struct FBaseFooClientService {
-    transport: Box<dyn FTransport>,
+    transport: Box<dyn FTransport>, // TODO: See if we can make this parametric
     input_protocol_factory: FInputProtocolFactory,
     output_protocol_factory: FOutputProtocolFactory,
+}
+
+impl FBaseFooClientService {
+    fn call_delegate(&mut self, req: FBaseFooRequest) -> Result<FBaseFooResponse, thrift::Error> {
+        let FBaseFooRequest { mut ctx, method } = req;
+        let mut buffer = FMemoryOutputBuffer::new(0);
+        {
+            let mut oprot = self.output_protocol_factory.get_protocol(&mut buffer);
+            oprot.write_request_header(&ctx)?;
+            let mut oproxy = oprot.t_protocol_proxy();
+            match method {
+                FBaseFooMethod::BasePing(args) => {
+                    oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier {
+                        name: "basePing".into(),
+                        message_type: thrift::protocol::TMessageType::Call,
+                        sequence_number: 0,
+                    })?;
+                    let args = FBaseFooPingArgs {};
+                    args.write(&mut oproxy)?;
+                }
+            };
+            oproxy.write_message_end()?;
+            oproxy.flush()?;
+        }
+        let mut result_transport = self.transport.request(&ctx, buffer.bytes())?;
+        {
+            let mut iprot = self
+                .input_protocol_factory
+                .get_protocol(&mut result_transport);
+            iprot.read_response_header(&mut ctx)?;
+            let mut iproxy = iprot.t_protocol_proxy();
+            let msg_id = iproxy.read_message_begin()?;
+            if msg_id.name != "basePing" {
+                return Err(thrift::new_application_error(
+                    thrift::ApplicationErrorKind::WrongMethodName,
+                    "basePing failed: wrong method name",
+                ));
+            }
+            match msg_id.message_type {
+                thrift::protocol::TMessageType::Exception => {
+                    let err = thrift::Error::Application(
+                        thrift::Error::read_application_error_from_in_protocol(&mut iproxy)?,
+                    );
+                    iproxy.read_message_end()?;
+                    if frugal::errors::is_too_large_error(&err) {
+                        Err(thrift::new_transport_error(
+                            thrift::TransportErrorKind::SizeLimit,
+                            err.to_string(),
+                        ))
+                    } else {
+                        Err(err)
+                    }
+                }
+                thrift::protocol::TMessageType::Reply => {
+                    let mut result = FBaseFooPingResult::new();
+                    result.read(&mut iproxy)?;
+                    iproxy.read_message_end()?;
+                    Ok(FBaseFooResponse::BasePing(result))
+                }
+                _ => Err(thrift::new_application_error(
+                    thrift::ApplicationErrorKind::InvalidMessageType,
+                    "basePing failed: invalid message type",
+                )),
+            }
+        }
+    }
 }
 
 impl Service for FBaseFooClientService {
@@ -76,7 +147,7 @@ impl Service for FBaseFooClientService {
     }
 
     fn call(&mut self, req: FBaseFooRequest) -> FutureResult<FBaseFooResponse, thrift::Error> {
-        unimplemented!()
+        self.call_delegate(req).into()
     }
 }
 
@@ -87,9 +158,10 @@ impl FBaseFooPingArgs {
         FBaseFooPingArgs {}
     }
 
-    fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
-        T: thrift::protocol::TInputProtocol,
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
     {
         iprot.read_struct_begin()?;
         loop {
@@ -104,6 +176,16 @@ impl FBaseFooPingArgs {
         }
         iprot.read_struct_end()
     }
+
+    fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
+    where
+        W: TWriteTransport,
+        T: TOutputProtocol<W>,
+    {
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_args"))?;
+        oprot.write_field_stop()?;
+        oprot.write_struct_end()
+    }
 }
 
 pub struct FBaseFooPingResult {}
@@ -113,8 +195,31 @@ impl FBaseFooPingResult {
         FBaseFooPingResult {}
     }
 
-    fn write(&self, oprot: &mut FOutputProtocol) -> thrift::Result<()> {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_Result"))?;
+    fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    where
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
+    {
+        iprot.read_struct_begin()?;
+        loop {
+            let field_id = iprot.read_field_begin()?;
+            if field_id.field_type == thrift::protocol::TType::Stop {
+                break;
+            };
+            match field_id.id {
+                _ => iprot.skip(field_id.field_type)?,
+            };
+            iprot.read_field_end()?;
+        }
+        iprot.read_struct_end()
+    }
+
+    fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
+    where
+        W: TWriteTransport,
+        T: TOutputProtocol<W>,
+    {
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_result"))?;
         oprot.write_field_stop()?;
         oprot.write_struct_end()
     }
@@ -240,13 +345,20 @@ impl<S> FProcessor for FBaseFooProcessor<S>
 where
     S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
-    fn process(
+    fn process<R, W>(
         &mut self,
-        iprot: &mut FInputProtocol,
-        oprot: &mut FOutputProtocol,
-    ) -> thrift::Result<()> {
+        iprot: &mut FInputProtocol<R>,
+        oprot: &mut FOutputProtocol<W>,
+    ) -> thrift::Result<()>
+    where
+        R: TReadTransport,
+        W: TWriteTransport,
+    {
         let ctx = iprot.read_request_header()?;
-        let name = iprot.read_message_begin().map(|tmid| tmid.name)?;
+        let name = {
+            let mut iproxy = iprot.t_protocol_proxy();
+            iproxy.read_message_begin().map(|tmid| tmid.name)?
+        };
 
         match &*name {
             "basePing" => self.base_ping(&ctx, iprot, oprot),
@@ -256,11 +368,13 @@ where
                     &name,
                     ctx.correlation_id()
                 );
-                iprot.skip(thrift::protocol::TType::Struct)?;
-                iprot.read_message_end()?;
+                let mut iproxy = iprot.t_protocol_proxy();
+                iproxy.skip(thrift::protocol::TType::Struct)?;
+                iproxy.read_message_end()?;
 
                 oprot.write_response_header(&ctx)?;
-                oprot.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+                let mut oproxy = oprot.t_protocol_proxy();
+                oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
                     &name as &str,
                     thrift::protocol::TMessageType::Exception,
                     0,
@@ -269,9 +383,9 @@ where
                     thrift::ApplicationErrorKind::UnknownMethod,
                     format!("Unknown function {}", &name),
                 );
-                thrift::Error::write_application_error_to_out_protocol(&ex, oprot)?;
-                oprot.write_message_end()?;
-                oprot.flush()
+                thrift::Error::write_application_error_to_out_protocol(&ex, &mut oproxy)?;
+                oproxy.write_message_end()?;
+                oproxy.flush()
             }
         }
     }
@@ -281,15 +395,20 @@ impl<S> FBaseFooProcessor<S>
 where
     S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
-    fn base_ping(
+    fn base_ping<R, W>(
         &mut self,
         ctx: &FContext,
-        iprot: &mut FInputProtocol,
-        oprot: &mut FOutputProtocol,
-    ) -> thrift::Result<()> {
+        iprot: &mut FInputProtocol<R>,
+        oprot: &mut FOutputProtocol<W>,
+    ) -> thrift::Result<()>
+    where
+        R: TReadTransport,
+        W: TWriteTransport,
+    {
         let mut args = FBaseFooPingArgs {};
-        args.read(iprot)?;
-        iprot.read_message_end()?;
+        let mut iproxy = iprot.t_protocol_proxy();
+        args.read(&mut iproxy)?;
+        iproxy.read_message_end()?;
         let req = FBaseFooRequest {
             ctx: ctx.clone(),
             method: FBaseFooMethod::BasePing(args),
@@ -317,16 +436,18 @@ where
                 let write_result = oprot
                     .write_response_header(&ctx)
                     .and_then(|()| {
-                        oprot.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
-                            "basePing",
-                            thrift::protocol::TMessageType::Reply,
-                            0,
-                        ))
+                        oprot.t_protocol_proxy().write_message_begin(
+                            &thrift::protocol::TMessageIdentifier::new(
+                                "basePing",
+                                thrift::protocol::TMessageType::Reply,
+                                0,
+                            ),
+                        )
                     }).and_then(|()| {
                         let result = FBaseFooPingResult {};
-                        result.write(oprot)
-                    }).and_then(|()| oprot.write_message_end())
-                    .and_then(|()| oprot.flush());
+                        result.write(&mut oprot.t_protocol_proxy())
+                    }).and_then(|()| oprot.t_protocol_proxy().write_message_end())
+                    .and_then(|()| oprot.t_protocol_proxy().flush());
 
                 match write_result {
                     Err(err) => {
