@@ -64,13 +64,19 @@ where
     }
 }
 
-pub struct FBaseFooClientService {
-    transport: Box<dyn FTransport>, // TODO: See if we can make this parametric
+pub struct FBaseFooClientService<T>
+where
+    T: FTransport,
+{
+    transport: T,
     input_protocol_factory: FInputProtocolFactory,
     output_protocol_factory: FOutputProtocolFactory,
 }
 
-impl FBaseFooClientService {
+impl<T> FBaseFooClientService<T>
+where
+    T: FTransport,
+{
     fn call_delegate(&mut self, req: FBaseFooRequest) -> Result<FBaseFooResponse, thrift::Error> {
         let FBaseFooRequest { mut ctx, method } = req;
         let mut buffer = FMemoryOutputBuffer::new(0);
@@ -136,7 +142,10 @@ impl FBaseFooClientService {
     }
 }
 
-impl Service for FBaseFooClientService {
+impl<T> Service for FBaseFooClientService<T>
+where
+    T: FTransport,
+{
     type Request = FBaseFooRequest;
     type Response = FBaseFooResponse;
     type Error = thrift::Error;
