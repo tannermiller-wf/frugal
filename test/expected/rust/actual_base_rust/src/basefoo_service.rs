@@ -22,6 +22,7 @@ use frugal::processor::FProcessor;
 use frugal::protocol::{
     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
 };
+use frugal::provider::FServiceProvider;
 use frugal::service::example;
 use frugal::service::Request;
 use frugal::transport::FTransport;
@@ -37,13 +38,19 @@ where
     service: S,
 }
 
-impl<S> FBaseFooClient<S>
+impl<T> FBaseFooClient<FBaseFooClientService<T>>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    T: FTransport,
 {
-    //pub fn new() -> FBaseFooClient {
-    //    unimplemented!()
-    //}
+    pub fn new(provider: FServiceProvider<T>) -> FBaseFooClient<FBaseFooClientService<T>> {
+        FBaseFooClient {
+            service: FBaseFooClientService {
+                transport: provider.transport,
+                input_protocol_factory: provider.input_protocol_factory,
+                output_protocol_factory: provider.output_protocol_factory,
+            },
+        }
+    }
 }
 
 impl<S> FBaseFoo for FBaseFooClient<S>
