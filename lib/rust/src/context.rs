@@ -104,6 +104,19 @@ impl FContext {
             None => DEFAULT_TIMEOUT.clone(),
         }
     }
+
+    pub fn get_op_id(&self) -> Result<u64, String> {
+        self.request_headers
+            .get(OP_ID_HEADER)
+            .ok_or(format!(
+                "FContext does not have the required {} request header",
+                OP_ID_HEADER
+            )).and_then(|op_id| {
+                op_id
+                    .parse()
+                    .map_err(|err: std::num::ParseIntError| err.to_string())
+            })
+    }
 }
 
 impl Clone for FContext {

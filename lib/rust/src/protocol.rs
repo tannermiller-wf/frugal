@@ -15,12 +15,12 @@ use util::{read_exact, read_size};
 
 const PROTOCOL_V0: u8 = 0x00;
 
-enum ProtocolMarshaler {
+pub(crate) enum ProtocolMarshaler {
     V0,
 }
 
 impl ProtocolMarshaler {
-    fn get(version: u8) -> thrift::Result<ProtocolMarshaler> {
+    pub(crate) fn get(version: u8) -> thrift::Result<ProtocolMarshaler> {
         match version {
             PROTOCOL_V0 => Ok(ProtocolMarshaler::V0),
             _ => Err(thrift::new_protocol_error(
@@ -30,7 +30,7 @@ impl ProtocolMarshaler {
         }
     }
 
-    fn unmarshal_headers<R: io::Read>(
+    pub(crate) fn unmarshal_headers<R: io::Read>(
         &self,
         reader: &mut R,
     ) -> thrift::Result<BTreeMap<String, String>> {
@@ -285,6 +285,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct FInputProtocolFactory {
     input_proto_factory: TCompactInputProtocolFactory,
 }
@@ -333,7 +334,8 @@ where
                                 err.description()
                             ),
                         )
-                    }).and_then(|n| {
+                    })
+                    .and_then(|n| {
                         if n < buf.len() {
                             Err(thrift::new_transport_error(
                                 thrift::TransportErrorKind::Unknown,
@@ -343,7 +345,8 @@ where
                             Ok(())
                         }
                     })
-            }).and_then(|_| {
+            })
+            .and_then(|_| {
                 self.transport.flush().map_err(|err| {
                     thrift::new_transport_error(
                         thrift::TransportErrorKind::Unknown,
@@ -490,6 +493,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct FOutputProtocolFactory {
     output_proto_factory: TCompactOutputProtocolFactory,
 }

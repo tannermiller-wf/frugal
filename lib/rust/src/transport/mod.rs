@@ -4,6 +4,7 @@ use thrift::transport::TReadTransport;
 use context::FContext;
 
 pub mod http;
+pub mod nats;
 
 pub trait FTransport {
     type Response: TReadTransport;

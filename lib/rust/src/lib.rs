@@ -4,8 +4,12 @@ extern crate futures;
 extern crate hyper;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate crossbeam;
+#[macro_use]
 extern crate log;
 extern crate mime;
+extern crate nats;
 extern crate thrift;
 extern crate tokio_core;
 extern crate tower_service;
