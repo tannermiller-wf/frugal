@@ -147,7 +147,7 @@ where
                 })?;
         }
 
-        for i in 0..self.worker_count {
+        for _ in 0..self.worker_count {
             let pub_client_clone = pub_client.clone();
             let recv_clone = receiver.clone();
             let high_water_mark_clone = self.high_water_mark.clone();
@@ -193,7 +193,7 @@ where
 
 fn worker<P>(
     client_mu: Arc<Mutex<nats::Client>>,
-    mut receiver: channel::Receiver<FrameWrapper>,
+    receiver: channel::Receiver<FrameWrapper>,
     high_water_mark: Duration,
     mut processor: P,
     iprot_factory: FInputProtocolFactory,
@@ -240,12 +240,14 @@ fn process_frame<P>(
 where
     P: FProcessor,
 {
-    let mut input = Cursor::new(&msg.frame[4..]);
+    let input = Cursor::new(&msg.frame[4..]);
     let mut output = FMemoryOutputBuffer::new(NATS_MAX_MESSAGE_SIZE);
     let mut iprot = iprot_factory.get_protocol(input);
-    let mut oprot = oprot_factory.get_protocol(output);
 
-    processor.process(&mut iprot, &mut oprot)?;
+    {
+        let mut oprot = oprot_factory.get_protocol(&mut output);
+        processor.process(&mut iprot, &mut oprot)?;
+    };
 
     if output.bytes().len() == 0 {
         return Ok(());

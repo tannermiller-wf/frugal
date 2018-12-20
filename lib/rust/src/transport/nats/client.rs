@@ -33,8 +33,9 @@ impl FNatsTransport {
         S2: Into<String>,
         S3: Into<String>,
     {
-        let mut client1 = build_client(&*server.into(), tls_config)?;
-        let client2 = build_client(&*server.into(), tls_config)?;
+        let server = server.into();
+        let mut client1 = build_client(&server, tls_config.clone())?;
+        let client2 = build_client(&server, tls_config)?;
         let subj = subject.into();
         client1.subscribe(&subj, None).map_err(|err| {
             thrift::new_transport_error(thrift::TransportErrorKind::Unknown, err.to_string())

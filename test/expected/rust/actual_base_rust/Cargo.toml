@@ -1,0 +1,12 @@
+[package]
+name = "rust"
+version = "2.22.0"
+
+[dependencies]
+thrift = { path = "/home/tanner/code/thrift/lib/rs" }
+frugal = { path = "../../../../lib/rust" }
+lazy_static = "1.2"
+log = "0.4"
+tower-service = "0.1"
+tower-web = "0.3"
+futures = "0.1"

@@ -3,7 +3,7 @@ use thrift::transport::{TReadTransport, TWriteTransport};
 
 use protocol::{FInputProtocol, FOutputProtocol};
 
-pub trait FProcessor {
+pub trait FProcessor: Clone + Send + 'static {
     fn process<R, W>(
         &mut self,
         iprot: &mut FInputProtocol<R>,
