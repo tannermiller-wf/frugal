@@ -557,8 +557,8 @@ impl TMessageIdentifier {
     ) -> TMessageIdentifier {
         TMessageIdentifier {
             name: name.into(),
-            message_type: message_type,
-            sequence_number: sequence_number,
+            message_type,
+            sequence_number,
         }
     }
 }
@@ -607,7 +607,7 @@ impl TFieldIdentifier {
     {
         TFieldIdentifier {
             name: name.into().map(|n| n.into()),
-            field_type: field_type,
+            field_type,
             id: id.into(),
         }
     }
@@ -626,10 +626,7 @@ impl TListIdentifier {
     /// Create a `TListIdentifier` for a list with `size` elements of type
     /// `element_type`.
     pub fn new(element_type: TType, size: i32) -> TListIdentifier {
-        TListIdentifier {
-            element_type: element_type,
-            size: size,
-        }
+        TListIdentifier { element_type, size }
     }
 }
 
@@ -646,10 +643,7 @@ impl TSetIdentifier {
     /// Create a `TSetIdentifier` for a set with `size` elements of type
     /// `element_type`.
     pub fn new(element_type: TType, size: i32) -> TSetIdentifier {
-        TSetIdentifier {
-            element_type: element_type,
-            size: size,
-        }
+        TSetIdentifier { element_type, size }
     }
 }
 
@@ -675,7 +669,7 @@ impl TMapIdentifier {
         TMapIdentifier {
             key_type: key_type.into(),
             value_type: value_type.into(),
-            size: size,
+            size,
         }
     }
 }

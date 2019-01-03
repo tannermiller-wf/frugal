@@ -27,7 +27,7 @@ use super::{TOutputProtocol, TSetIdentifier, TStructIdentifier, TType};
 use transport::{TReadTransport, TWriteTransport};
 use {ProtocolError, ProtocolErrorKind};
 
-const BINARY_PROTOCOL_VERSION_1: u32 = 0x80010000;
+const BINARY_PROTOCOL_VERSION_1: u32 = 0x8001_0000;
 
 /// Read messages encoded in the Thrift simple binary encoding.
 ///
@@ -69,10 +69,7 @@ where
     /// Set `strict` to `true` if all incoming messages contain the protocol
     /// version number in the protocol header.
     pub fn new(transport: R, strict: bool) -> TBinaryInputProtocol<R> {
-        TBinaryInputProtocol {
-            strict: strict,
-            transport: transport,
-        }
+        TBinaryInputProtocol { strict, transport }
     }
 }
 
@@ -80,7 +77,7 @@ impl<R> TInputProtocol<R> for TBinaryInputProtocol<R>
 where
     R: TReadTransport,
 {
-    #[cfg_attr(feature = "cargo-clippy", allow(collapsible_if))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::collapsible_if))]
     fn read_message_begin(&mut self) -> ::Result<TMessageIdentifier> {
         let mut first_bytes = vec![0; 4];
         self.transport.read_exact(&mut first_bytes[..])?;
@@ -296,10 +293,7 @@ where
     /// Set `strict` to `true` if all outgoing messages should contain the
     /// protocol version number in the protocol header.
     pub fn new(transport: T, strict: bool) -> TBinaryOutputProtocol<T> {
-        TBinaryOutputProtocol {
-            strict: strict,
-            transport: transport,
-        }
+        TBinaryOutputProtocol { strict, transport }
     }
 }
 
@@ -310,7 +304,7 @@ where
     fn write_message_begin(&mut self, identifier: &TMessageIdentifier) -> ::Result<()> {
         if self.strict {
             let message_type: u8 = identifier.message_type.into();
-            let header = BINARY_PROTOCOL_VERSION_1 | (message_type as u32);
+            let header = BINARY_PROTOCOL_VERSION_1 | u32::from(message_type);
             self.transport.write_u32::<BigEndian>(header)?;
             self.write_string(&identifier.name)?;
             self.write_i32(identifier.sequence_number)
@@ -622,11 +616,9 @@ mod tests {
     fn must_write_field_begin() {
         let (_, mut o_prot) = test_objects(true);
 
-        assert!(
-            o_prot
-                .write_field_begin(&TFieldIdentifier::new("some_field", TType::String, 22))
-                .is_ok()
-        );
+        assert!(o_prot
+            .write_field_begin(&TFieldIdentifier::new("some_field", TType::String, 22))
+            .is_ok());
 
         let expected: [u8; 3] = [0x0B, 0x00, 0x16];
         assert_eq_written_bytes!(o_prot, expected);
@@ -687,11 +679,9 @@ mod tests {
     fn must_write_list_begin() {
         let (_, mut o_prot) = test_objects(true);
 
-        assert!(
-            o_prot
-                .write_list_begin(&TListIdentifier::new(TType::Bool, 5))
-                .is_ok()
-        );
+        assert!(o_prot
+            .write_list_begin(&TListIdentifier::new(TType::Bool, 5))
+            .is_ok());
 
         let expected: [u8; 5] = [0x02, 0x00, 0x00, 0x00, 0x05];
         assert_eq_written_bytes!(o_prot, expected);
@@ -719,11 +709,9 @@ mod tests {
     fn must_write_set_begin() {
         let (_, mut o_prot) = test_objects(true);
 
-        assert!(
-            o_prot
-                .write_set_begin(&TSetIdentifier::new(TType::I16, 7))
-                .is_ok()
-        );
+        assert!(o_prot
+            .write_set_begin(&TSetIdentifier::new(TType::I16, 7))
+            .is_ok());
 
         let expected: [u8; 5] = [0x06, 0x00, 0x00, 0x00, 0x07];
         assert_eq_written_bytes!(o_prot, expected);
@@ -752,11 +740,9 @@ mod tests {
     fn must_write_map_begin() {
         let (_, mut o_prot) = test_objects(true);
 
-        assert!(
-            o_prot
-                .write_map_begin(&TMapIdentifier::new(TType::I64, TType::Struct, 32))
-                .is_ok()
-        );
+        assert!(o_prot
+            .write_map_begin(&TMapIdentifier::new(TType::I64, TType::Struct, 32))
+            .is_ok());
 
         let expected: [u8; 6] = [0x0A, 0x0C, 0x00, 0x00, 0x00, 0x20];
         assert_eq_written_bytes!(o_prot, expected);

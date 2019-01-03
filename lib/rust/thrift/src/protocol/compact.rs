@@ -77,7 +77,7 @@ where
             last_read_field_id: 0,
             read_field_id_stack: Vec::new(),
             pending_read_bool_value: None,
-            transport: transport,
+            transport,
         }
     }
 
@@ -89,7 +89,7 @@ where
         let possible_element_count = (header & 0xF0) >> 4;
         if possible_element_count != 15 {
             // high bits set high if count and type encoded separately
-            element_count = possible_element_count as i32;
+            element_count = i32::from(possible_element_count);
         } else {
             element_count = self.transport.read_varint::<u32>()? as i32;
         }
@@ -187,14 +187,14 @@ where
             ),
             _ => {
                 if field_delta != 0 {
-                    self.last_read_field_id += field_delta as i16;
+                    self.last_read_field_id += i16::from(field_delta);
                 } else {
                     self.last_read_field_id = self.read_i16()?;
                 };
 
                 Ok(TFieldIdentifier {
                     name: None,
-                    field_type: field_type,
+                    field_type,
                     id: Some(self.last_read_field_id),
                 })
             }
@@ -373,7 +373,7 @@ where
             last_write_field_id: 0,
             write_field_id_stack: Vec::new(),
             pending_write_bool_field_identifier: None,
-            transport: transport,
+            transport,
         }
     }
 

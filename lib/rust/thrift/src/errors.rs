@@ -242,10 +242,7 @@ impl Error {
 
         i.read_struct_end()?;
 
-        Ok(ApplicationError {
-            kind: kind,
-            message: message,
-        })
+        Ok(ApplicationError { kind, message })
     }
 
     /// Convert an `ApplicationError` into its wire representation and write
@@ -372,7 +369,7 @@ impl TransportError {
     /// Create a new `TransportError`.
     pub fn new<S: Into<String>>(kind: TransportErrorKind, message: S) -> TransportError {
         TransportError {
-            kind: kind,
+            kind,
             message: message.into(),
         }
     }
@@ -500,7 +497,7 @@ impl ProtocolError {
     /// Create a new `ProtocolError`.
     pub fn new<S: Into<String>>(kind: ProtocolErrorKind, message: S) -> ProtocolError {
         ProtocolError {
-            kind: kind,
+            kind,
             message: message.into(),
         }
     }
@@ -591,7 +588,7 @@ impl ApplicationError {
     /// Create a new `ApplicationError`.
     pub fn new<S: Into<String>>(kind: ApplicationErrorKind, message: S) -> ApplicationError {
         ApplicationError {
-            kind: kind,
+            kind,
             message: message.into(),
         }
     }

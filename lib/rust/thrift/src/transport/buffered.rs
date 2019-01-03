@@ -192,12 +192,15 @@ where
     /// `read_capacity` and an internal write buffer of size
     /// `write_capacity` that wraps the given `TIoChannel`.
     pub fn with_capacity(write_capacity: usize, channel: C) -> TBufferedWriteTransport<C> {
-        assert!(write_capacity > 0, "write buffer size must be a positive integer");
+        assert!(
+            write_capacity > 0,
+            "write buffer size must be a positive integer"
+        );
 
         TBufferedWriteTransport {
             buf: Vec::with_capacity(write_capacity),
             cap: write_capacity,
-            channel: channel,
+            channel,
         }
     }
 }
