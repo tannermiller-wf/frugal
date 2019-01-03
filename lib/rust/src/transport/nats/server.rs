@@ -60,7 +60,7 @@ where
             queue: None,
             worker_count: 1,
             queue_len: DEFAULT_WORK_QUEUE_LEN,
-            high_water_mark: DEFAULT_WATER_MARK.clone(),
+            high_water_mark: *DEFAULT_WATER_MARK,
         }
     }
 
@@ -150,7 +150,7 @@ where
         for _ in 0..self.worker_count {
             let pub_client_clone = pub_client.clone();
             let recv_clone = receiver.clone();
-            let high_water_mark_clone = self.high_water_mark.clone();
+            let high_water_mark_clone = self.high_water_mark;
             let proc_clone = self.processor.clone();
             let iprot_factory_clone = self.iprot_factory.clone();
             let oprot_factory_clone = self.oprot_factory.clone();
@@ -178,10 +178,10 @@ where
             let send_result = sender.send(FrameWrapper {
                 frame: msg.msg,
                 timestamp: Instant::now(),
-                reply: reply,
+                reply,
             });
 
-            if let Err(_) = send_result {
+            if send_result.is_err() {
                 error!("frugal: work channel was disconnected, stopping subscription");
                 break;
             };
@@ -206,7 +206,7 @@ fn worker<P>(
             Ok(msg) => {
                 let dur = msg.timestamp.elapsed();
                 if dur > high_water_mark {
-                    let millis = dur.as_secs() * 1000 + dur.subsec_millis() as u64;
+                    let millis = dur.as_secs() * 1000 + u64::from(dur.subsec_millis());
                     warn!("frugal: request spent {} in the transport buffer, your consumer might be backed up", millis);
                 };
                 msg
@@ -249,9 +249,12 @@ where
         processor.process(&mut iprot, &mut oprot)?;
     };
 
-    if output.bytes().len() == 0 {
+    if output.bytes().is_empty() {
         return Ok(());
     }
+
+    println!("process_frame output: {:?}", output.bytes());
+    println!("reply: {}", &msg.reply);
 
     client
         .lock()

@@ -36,8 +36,8 @@ impl FNatsTransport {
         let server = server.into();
         let mut client1 = build_client(&server, tls_config.clone())?;
         let client2 = build_client(&server, tls_config)?;
-        let subj = subject.into();
-        client1.subscribe(&subj, None).map_err(|err| {
+        let inbox = inbox.into();
+        client1.subscribe(&inbox, None).map_err(|err| {
             thrift::new_transport_error(thrift::TransportErrorKind::Unknown, err.to_string())
         })?;
         let registry: Arc<Mutex<HashMap<u64, channel::Sender<Vec<u8>>>>> =
@@ -46,12 +46,15 @@ impl FNatsTransport {
         thread::spawn(move || {
             for event in client1.events() {
                 let nats::Event { msg, .. } = event;
-                if msg.len() == 0 {
+
+                if msg.len() < 5 {
                     warn!("frugal: invalid protocol frame headers: invalid frame size 0");
                     continue;
                 };
 
-                let prot_marshaler = match ProtocolMarshaler::get(msg[0]) {
+                let msg_slice = &msg[4..]; // There are 4 bytes at the beginning that we always ignore
+
+                let prot_marshaler = match ProtocolMarshaler::get(msg_slice[0]) {
                     Ok(prot_marshaler) => prot_marshaler,
                     Err(err) => {
                         warn!("frugal: invalid protocol frame headers: {}", err);
@@ -60,10 +63,12 @@ impl FNatsTransport {
                 };
 
                 let op_id_res = {
-                    match prot_marshaler.unmarshal_headers(&mut Cursor::new(&msg[0..])) {
+                    match prot_marshaler.unmarshal_headers(&mut Cursor::new(&msg_slice[1..])) {
                         Ok(header) => header
                             .get(OP_ID_HEADER)
-                            .ok_or(format!("frugal: headers did not include {}", OP_ID_HEADER))
+                            .ok_or_else(|| {
+                                format!("frugal: headers did not include {}", OP_ID_HEADER)
+                            })
                             .and_then(|op_id_str| {
                                 op_id_str.parse().map_err(|err| {
                                     format!(
@@ -84,7 +89,7 @@ impl FNatsTransport {
                         let registry = registry_thread.lock().unwrap();
                         match registry.get(&op_id) {
                             Some(result_chan) => {
-                                if let Err(_) = result_chan.try_send(msg) {
+                                if result_chan.try_send(msg_slice.to_vec()).is_err() {
                                     warn!("frugal: op id already handled");
                                     continue;
                                 }
@@ -106,10 +111,10 @@ impl FNatsTransport {
             }
         });
         Ok(FNatsTransport {
-            subject: subj,
-            inbox: inbox.into(),
+            subject: subject.into(),
+            inbox,
             client: Arc::new(Mutex::new(client2)),
-            registry: registry,
+            registry,
         })
     }
 }
@@ -170,7 +175,7 @@ impl<'a> FTransport for FNatsTransport {
             })?;
 
         select! {
-            recv(receiver) -> result => result.map(|res| Cursor::new(res)).map_err(|_| thrift::new_transport_error(thrift::TransportErrorKind::Unknown, "frugal: result channel closed")),
+            recv(receiver) -> result => result.map(Cursor::new).map_err(|_| thrift::new_transport_error(thrift::TransportErrorKind::Unknown, "frugal: result channel closed")),
             recv(channel::after(ctx.timeout())) -> _ => Err(thrift::new_transport_error(thrift::TransportErrorKind::TimedOut, "frugal: nats request timed out")),
         }
     }

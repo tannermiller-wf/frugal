@@ -147,10 +147,10 @@ where
                 "frugal: request missing op id",
             )
         })?;
-        ctx.add_response_header(context::OP_ID_HEADER, op_id);
+        ctx.add_response_header(context::OP_ID_HEADER, op_id.as_ref());
 
         if let Some(cid) = headers.get(context::CID_HEADER) {
-            ctx.add_response_header(context::CID_HEADER, cid);
+            ctx.add_response_header(context::CID_HEADER, cid.as_ref());
         }
 
         Ok(ctx)
@@ -742,8 +742,8 @@ mod test {
         let mut ctx = FContext::new(Some("123"));
         ctx.add_response_header("foo", "bar");
         ctx.add_response_header("hello", "world");
-        let op_id = ctx.request_header(OP_ID_HEADER).unwrap().clone();
-        ctx.add_response_header(OP_ID_HEADER, &op_id);
+        let op_id = ctx.request_header(OP_ID_HEADER).unwrap().to_string();
+        ctx.add_response_header(OP_ID_HEADER, op_id);
 
         // call write_response_header
         {

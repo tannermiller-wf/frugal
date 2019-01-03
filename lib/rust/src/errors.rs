@@ -5,11 +5,11 @@ use thrift::transport::TWriteTransport;
 use context::FContext;
 use protocol::FOutputProtocol;
 
-pub const USER_ERROR_DESCRIPTION: &'static str =
+pub const USER_ERROR_DESCRIPTION: &str =
     "frugal: user handler code returned unhandled error on request with correlation id";
 
-pub const APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE: &'static str = "frugal: response was too large";
-pub const APPLICATION_EXCEPTION_REQUEST_TOO_LARGE: &'static str = "frugal: request was too large";
+pub const APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE: &str = "frugal: response was too large";
+pub const APPLICATION_EXCEPTION_REQUEST_TOO_LARGE: &str = "frugal: request was too large";
 
 pub fn write_application_error<S, W>(
     method: S,

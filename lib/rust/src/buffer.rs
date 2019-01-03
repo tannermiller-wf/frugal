@@ -1,6 +1,6 @@
 use std::io::{Result as IoResult, Write};
 
-const EMPTY_FRAME_SIZE: &'static [u8] = &[0, 0, 0, 0];
+const EMPTY_FRAME_SIZE: &[u8] = &[0, 0, 0, 0];
 
 pub struct FMemoryOutputBuffer {
     limit: usize,
@@ -11,7 +11,7 @@ impl FMemoryOutputBuffer {
     pub fn new(limit: usize) -> FMemoryOutputBuffer {
         let mut buffer = Vec::with_capacity(limit);
         buffer
-            .write(EMPTY_FRAME_SIZE)
+            .write_all(EMPTY_FRAME_SIZE)
             .expect("This should never happen: FMemoryOutputBuffer::new()");
         FMemoryOutputBuffer { limit, buffer }
     }
@@ -23,7 +23,7 @@ impl FMemoryOutputBuffer {
     pub fn reset(&mut self) {
         self.buffer.truncate(0);
         self.buffer
-            .write(EMPTY_FRAME_SIZE)
+            .write_all(EMPTY_FRAME_SIZE)
             .expect("This should never happen: FMemoryOutputBuffer::reset()");
     }
 }

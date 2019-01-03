@@ -5,8 +5,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use thrift;
 
 pub fn read_exact<R: io::Read>(reader: &mut R, size: usize) -> thrift::Result<Vec<u8>> {
-    let mut buf = Vec::with_capacity(size);
-    buf.resize(size, 0);
+    let mut buf = vec![0; size];
     reader.read_exact(&mut buf).map_err(|err| {
         match err.kind() {
                         io::ErrorKind::UnexpectedEof => thrift::new_transport_error(thrift::TransportErrorKind::EndOfFile, err.description()),
