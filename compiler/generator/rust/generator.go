@@ -131,8 +131,12 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 		 extern crate thrift;
 		 #[macro_use]
 		 extern crate lazy_static;
+		 #[macro_use]
+		 extern crate log;
+		 extern crate futures;
+		 extern crate tower_service;
+		 extern crate tower_web;
 		
-		#[allow(unused)]
 		use std::collections::{BTreeMap, BTreeSet};
 
 		`,
@@ -486,13 +490,19 @@ func where(s string) string {
 }
 
 func (g *Generator) GenerateStruct(s *parser.Struct) error {
+	_, err := g.rootFile.Write([]byte(g.generateStruct(s, func(s string) string { return s })))
+	return err
+
+}
+
+func (g *Generator) generateStruct(s *parser.Struct, writeStructID func(string) string) string {
 	var buffer bytes.Buffer
 
 	// write the struct def itself
 	g.writeDocComment(&buffer, s.Comment)
 	g.writeAnnotations(&buffer, s.Annotations)
 	sName := typeName(s.Name)
-	buffer.WriteString("#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]\n")
+	buffer.WriteString("#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]\n")
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
 	constructorExpressions := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
@@ -526,17 +536,18 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", sName))
 
 	// constructor method
-	buffer.WriteString(fmt.Sprintf("pub fn new() -> %s {\n", sName))
-	buffer.WriteString(fmt.Sprintf("%s {\n", sName))
-	buffer.WriteString(strings.Join(constructorExpressions, "\n"))
-	buffer.WriteString("}\n")
-	buffer.WriteString("}\n\n")
+	//buffer.WriteString(fmt.Sprintf("pub fn new() -> %s {\n", sName))
+	//buffer.WriteString(fmt.Sprintf("%s {\n", sName))
+	//buffer.WriteString(strings.Join(constructorExpressions, "\n"))
+	//buffer.WriteString("}\n")
+	//buffer.WriteString("}\n\n")
 
 	// primary read method
 	buffer.WriteString(
-		`pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+		`pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
 		 where
-		 	T: thrift::protocol::TInputProtocol,
+			R: thrift::transport::TReadTransport,
+		 	T: thrift::protocol::TInputProtocol<R>,
 		 {
 		 	iprot.read_struct_begin()?;
 		 	loop {
@@ -564,9 +575,10 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	// field read methods
 	for _, f := range s.Fields {
 		buffer.WriteString(fmt.Sprintf(
-			`fn read_field_%v<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+			`fn read_field_%v<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     		 where
-    		     T: thrift::protocol::TInputProtocol,
+				 R: thrift::transport::TReadTransport,
+    		     T: thrift::protocol::TInputProtocol<R>,
     		 {`,
 			f.ID,
 		))
@@ -590,15 +602,13 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 
 	// primary write method
 	buffer.WriteString(fmt.Sprintf(
-		`pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+		`pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
 		 where
-		 	T: thrift::protocol::TOutputProtocol,
+			W: thrift::transport::TWriteTransport,
+		 	T: thrift::protocol::TOutputProtocol<W>,
 		 {
-			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier{
-				 name: %q.into(),
-			 })?;
-			`,
-		s.Name,
+			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new(%q))?;`,
+		writeStructID(s.Name),
 	))
 	for _, f := range s.Fields {
 		buffer.WriteString(fmt.Sprintf("self.write_field_%d(oprot)?;\n", f.ID))
@@ -614,9 +624,10 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 	// field write methods
 	for _, f := range s.Fields {
 		buffer.WriteString(fmt.Sprintf(
-			`fn write_field_%v<T>(&self, oprot: &mut T) -> thrift::Result<()>
+			`fn write_field_%v<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
     		 where
-    		     T: thrift::protocol::TOutputProtocol,
+				 W: thrift::transport::TWriteTransport,
+    		     T: thrift::protocol::TOutputProtocol<W>,
     		 {`,
 			f.ID,
 		))
@@ -662,8 +673,7 @@ func (g *Generator) GenerateStruct(s *parser.Struct) error {
 
 	buffer.WriteString("}\n\n")
 
-	_, err := g.rootFile.Write(buffer.Bytes())
-	return err
+	return buffer.String()
 }
 
 func (g *Generator) isBorrowed(t *parser.Type) bool {
@@ -694,7 +704,7 @@ func (g *Generator) generateFieldReadDefinition(buffer *bytes.Buffer, fieldName 
 	} else if fType.IsCustom() {
 		tName := g.canonicalizeTypeName(fType)
 		buffer.WriteString(fmt.Sprintf(
-			`let mut %s = %s::new();
+			`let mut %s = %s::default();
 			 %s.read(iprot)?;
 			`, fieldName, tName, fieldName))
 	} else if fType.Name == "list" {
@@ -969,13 +979,12 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 
 	// write method
 	buffer.WriteString(fmt.Sprintf(
-		`pub fn write<T>(&self, oprot: &mut T) -> thrift::Result<()>
+		`pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
 		 where
-		 	T: thrift::protocol::TOutputProtocol,
+			W: thrift::transport::TWriteTransport,
+		 	T: thrift::protocol::TOutputProtocol<W>,
 		 {
-			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier{
-				 name: %q.into(),
-			 })?;
+			 oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new(%q))?;
 			 match self {
 			`,
 		union.Name,
@@ -1027,8 +1036,29 @@ func (g *Generator) GenerateTypesImports(file *os.File) error {
 func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) error {
 	// TODO: Handle other imports?
 	_, err := file.WriteString(
-		`use frugal::context::FContext;
+		`#![allow(unused_variables)]
+
+		 use std::collections::BTreeMap;
+		 use std::error::Error;
+		 
+		 use futures::future::{self, FutureResult};
+		 use futures::{Async, Future, Poll};
 		 use thrift;
+		 use tower_service::Service;
+		 use tower_web::middleware::{self, Middleware};
+		 use tower_web::util::Chain;
+		 
+		 use frugal::buffer::FMemoryOutputBuffer;
+		 use frugal::context::{FContext, OP_ID_HEADER};
+		 use frugal::errors;
+		 use frugal::processor::FProcessor;
+		 use frugal::protocol::{
+		     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
+		 };
+		 use frugal::provider::FServiceProvider;
+		 use frugal::service::example;
+		 use frugal::service::Request;
+		 use frugal::transport::FTransport;
 		
 		`,
 	)
@@ -1080,6 +1110,20 @@ func methodName(s string) string {
 	return buffer.String()
 }
 
+func (g *Generator) generateMethodArguments(arguments []*parser.Field) []string {
+	args := make([]string, 0, len(arguments))
+	for _, f := range arguments {
+		t := g.toRustType(f.Type, f.Modifier != parser.Required)
+		args = append(args, fmt.Sprintf("%s: %s", f.Name, t))
+	}
+	return args
+}
+
+func (g *Generator) generateMethodSignature(method *parser.Method) string {
+	return fmt.Sprintf("fn %s(&mut self, ctx: &FContext, %s) -> thrift::Result<%s>\n",
+		methodName(method.Name), commaSpaceJoin(g.generateMethodArguments(method.Arguments)), g.toRustType(method.ReturnType, false))
+}
+
 func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	var buffer bytes.Buffer
 
@@ -1095,16 +1139,61 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	for _, method := range s.Methods {
 		g.writeDocComment(&buffer, method.Comment)
 		g.writeAnnotations(&buffer, method.Annotations)
+		buffer.WriteString(fmt.Sprintf("%s;\n", g.generateMethodSignature(method)))
+	}
+	buffer.WriteString("}\n\n")
 
-		args := make([]string, 0, len(method.Arguments))
-		for _, f := range method.Arguments {
-			t := g.toRustType(f.Type, f.Modifier != parser.Required)
-			args = append(args, fmt.Sprintf("%s: %s", f.Name, t))
+	// write the arg and result types that get serialized
+	for _, method := range s.Methods {
+		buffer.WriteString(g.generateStruct(methodToArgsStruct(sName, method), func(string) string { return fmt.Sprintf("%s_args", method.Name) }))
+		buffer.WriteString(g.generateStruct(methodToResultStruct(sName, method), func(string) string { return fmt.Sprintf("%s_result", method.Name) }))
+	}
+
+	// write the other internal helper types
+	buffer.WriteString(fmt.Sprintf("pub enum F%sMethod {\n", sName))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf("%s(F%s%sArgs),\n", mName, sName, mName))
+	}
+	buffer.WriteString(fmt.Sprintf(`}
+	
+		impl F%sMethod {
+			fn name(&self) -> &'static str {
+				match *self {
+					`, sName))
+	for _, method := range s.Methods {
+		buffer.WriteString(fmt.Sprintf("%s(_) => %q,\n", typeName(method.Name), method.Name))
+	}
+	buffer.WriteString("}\n}\n}\n\n")
+
+	buffer.WriteString(fmt.Sprintf(`pub struct F%sRequest {
+			ctx: FContext,
+			method: F%sMethod,
+		}
+		
+		impl F%sRequest {
+			pub fn new(ctx: FContext, method: F%sMethod) -> F%sRequest {
+				F%sRequest { ctx, method }
+			}
 		}
 
-		buffer.WriteString(fmt.Sprintf("fn %s(ctx: FContext, %s) -> thrift::Result<%s>;\n", methodName(method.Name), commaSpaceJoin(args), g.toRustType(method.ReturnType, false)))
+		impl Request for F%sRequest {
+			fn context(&mut self) -> &mut FContext {
+				&mut self.ctx
+			}
+
+			fn method_name(&self) -> &'static str {
+				self.method.name()
+			}
+		}
+		
+		pub enum F%sResponse {
+			`, sName, sName, sName, sName, sName, sName, sName, sName))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf("%s(F%s%sResult),\n", mName, sName, mName))
 	}
-	buffer.WriteString("}\n")
+	buffer.WriteString("}\n\n")
 
 	// TODO: write the service client
 
@@ -1112,6 +1201,37 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 
 	_, err := file.Write(buffer.Bytes())
 	return err
+}
+
+func methodToArgsStruct(serviceName string, method *parser.Method) *parser.Struct {
+	return &parser.Struct{
+		Comment:     []string{},
+		Name:        fmt.Sprintf("F%s%sArgs", serviceName, typeName(method.Name)),
+		Fields:      method.Arguments,
+		Type:        parser.StructTypeStruct,
+		Annotations: []*parser.Annotation{},
+	}
+}
+
+func methodToResultStruct(serviceName string, method *parser.Method) *parser.Struct {
+	fields := []*parser.Field{}
+	if method.ReturnType != nil {
+		fields = append(fields, &parser.Field{
+			Comment:  []string{},
+			ID:       0,
+			Name:     "Success",
+			Modifier: parser.Optional,
+			Type:     method.ReturnType,
+		})
+	}
+	fields = append(fields, method.Exceptions...)
+	return &parser.Struct{
+		Comment:     []string{},
+		Name:        fmt.Sprintf("F%s%sResult", serviceName, typeName(method.Name)),
+		Fields:      fields,
+		Type:        parser.StructTypeStruct,
+		Annotations: []*parser.Annotation{},
+	}
 }
 
 func title(s string) string {

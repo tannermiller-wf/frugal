@@ -9,14 +9,12 @@ use std::error::Error;
 use futures::future::{self, FutureResult};
 use futures::{Async, Future, Poll};
 use thrift;
-use thrift::protocol::{TInputProtocol, TOutputProtocol};
-use thrift::transport::{TReadTransport, TWriteTransport};
 use tower_service::Service;
 use tower_web::middleware::{self, Middleware};
 use tower_web::util::Chain;
 
 use frugal::buffer::FMemoryOutputBuffer;
-use frugal::context::FContext;
+use frugal::context::{FContext, OP_ID_HEADER};
 use frugal::errors;
 use frugal::processor::FProcessor;
 use frugal::protocol::{
@@ -29,6 +27,111 @@ use frugal::transport::FTransport;
 
 pub trait FBaseFoo {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()>;
+}
+
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FBaseFooBasePingArgs {}
+
+impl FBaseFooBasePingArgs {
+    pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    where
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
+    {
+        iprot.read_struct_begin()?;
+        loop {
+            let field_id = iprot.read_field_begin()?;
+            if field_id.field_type == thrift::protocol::TType::Stop {
+                break;
+            };
+            match field_id.id {
+                _ => iprot.skip(field_id.field_type)?,
+            };
+            iprot.read_field_end()?;
+        }
+        iprot.read_struct_end()
+    }
+
+    pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
+    where
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
+    {
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_args"))?;
+        oprot.write_field_stop()?;
+        oprot.write_struct_end()
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FBaseFooBasePingResult {}
+
+impl FBaseFooBasePingResult {
+    pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+    where
+        R: thrift::transport::TReadTransport,
+        T: thrift::protocol::TInputProtocol<R>,
+    {
+        iprot.read_struct_begin()?;
+        loop {
+            let field_id = iprot.read_field_begin()?;
+            if field_id.field_type == thrift::protocol::TType::Stop {
+                break;
+            };
+            match field_id.id {
+                _ => iprot.skip(field_id.field_type)?,
+            };
+            iprot.read_field_end()?;
+        }
+        iprot.read_struct_end()
+    }
+
+    pub fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
+    where
+        W: thrift::transport::TWriteTransport,
+        T: thrift::protocol::TOutputProtocol<W>,
+    {
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_result"))?;
+        oprot.write_field_stop()?;
+        oprot.write_struct_end()
+    }
+}
+
+pub enum FBaseFooMethod {
+    BasePing(FBaseFooBasePingArgs),
+}
+
+impl FBaseFooMethod {
+    fn name(&self) -> &'static str {
+        match *self {
+            BasePing(_) => "basePing",
+        }
+    }
+}
+
+pub struct FBaseFooRequest {
+    ctx: FContext,
+    method: FBaseFooMethod,
+}
+
+impl FBaseFooRequest {
+    pub fn new(ctx: FContext, method: FBaseFooMethod) -> FBaseFooRequest {
+        FBaseFooRequest { ctx, method }
+    }
+}
+
+impl Request for FBaseFooRequest {
+    fn context(&mut self) -> &mut FContext {
+        &mut self.ctx
+    }
+
+    fn method_name(&self) -> &'static str {
+        self.method.name()
+    }
+}
+
+pub enum FBaseFooResponse {
+    BasePing(FBaseFooBasePingResult),
 }
 
 pub struct FBaseFooClient<S>
@@ -58,15 +161,9 @@ where
     S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        let request = FBaseFooRequest::new(
-            ctx.clone(),
-            FBaseFooMethod::BasePing(FBaseFooPingArgs::new()),
-        );
-        match self.service.call(request).wait()? {
-            FBaseFooResponse::BasePing(_) => (),
-            // TODO: See if we can detect and avoid generating this branch
-            _ => panic!("FBaseFooClient::base_ping() recieved an incorrect response"),
-        };
+        let args = FBaseFooBasePingArgs::default();
+        let request = FBaseFooRequest::new(ctx.clone(), FBaseFooMethod::BasePing(args));
+        self.service.call(request).wait()?;
         Ok(())
     }
 }
@@ -98,7 +195,7 @@ where
                         message_type: thrift::protocol::TMessageType::Call,
                         sequence_number: 0,
                     })?;
-                    let args = FBaseFooPingArgs {};
+                    let args = FBaseFooBasePingArgs {};
                     args.write(&mut oproxy)?;
                 }
             };
@@ -113,10 +210,10 @@ where
             iprot.read_response_header(&mut ctx)?;
             let mut iproxy = iprot.t_protocol_proxy();
             let msg_id = iproxy.read_message_begin()?;
-            if msg_id.name != "basePing" {
+            if msg_id.name != method.name() {
                 return Err(thrift::new_application_error(
                     thrift::ApplicationErrorKind::WrongMethodName,
-                    "basePing failed: wrong method name",
+                    format!("{} failed: wrong method name", method.name()),
                 ));
             }
             match msg_id.message_type {
@@ -135,7 +232,8 @@ where
                     }
                 }
                 thrift::protocol::TMessageType::Reply => {
-                    let mut result = FBaseFooPingResult::new();
+                    // TODO: This is wrong, this should be against each individual method
+                    let mut result = FBaseFooBasePingResult::default();
                     result.read(&mut iproxy)?;
                     iproxy.read_message_end()?;
                     Ok(FBaseFooResponse::BasePing(result))
@@ -167,80 +265,7 @@ where
     }
 }
 
-pub struct FBaseFooPingArgs {}
-
-impl FBaseFooPingArgs {
-    pub fn new() -> FBaseFooPingArgs {
-        FBaseFooPingArgs {}
-    }
-
-    fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
-    where
-        R: thrift::transport::TReadTransport,
-        T: thrift::protocol::TInputProtocol<R>,
-    {
-        iprot.read_struct_begin()?;
-        loop {
-            let field_id = iprot.read_field_begin()?;
-            if field_id.field_type == thrift::protocol::TType::Stop {
-                break;
-            };
-            match field_id.id {
-                _ => iprot.skip(field_id.field_type)?,
-            };
-            iprot.read_field_end()?;
-        }
-        iprot.read_struct_end()
-    }
-
-    fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
-    where
-        W: TWriteTransport,
-        T: TOutputProtocol<W>,
-    {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_args"))?;
-        oprot.write_field_stop()?;
-        oprot.write_struct_end()
-    }
-}
-
-pub struct FBaseFooPingResult {}
-
-impl FBaseFooPingResult {
-    pub fn new() -> FBaseFooPingResult {
-        FBaseFooPingResult {}
-    }
-
-    fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
-    where
-        R: thrift::transport::TReadTransport,
-        T: thrift::protocol::TInputProtocol<R>,
-    {
-        iprot.read_struct_begin()?;
-        loop {
-            let field_id = iprot.read_field_begin()?;
-            if field_id.field_type == thrift::protocol::TType::Stop {
-                break;
-            };
-            match field_id.id {
-                _ => iprot.skip(field_id.field_type)?,
-            };
-            iprot.read_field_end()?;
-        }
-        iprot.read_struct_end()
-    }
-
-    fn write<W, T>(&self, oprot: &mut T) -> thrift::Result<()>
-    where
-        W: TWriteTransport,
-        T: TOutputProtocol<W>,
-    {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("basePing_result"))?;
-        oprot.write_field_stop()?;
-        oprot.write_struct_end()
-    }
-}
-
+#[derive(Clone)]
 pub struct FBaseFooProcessor<S>
 where
     S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
@@ -270,7 +295,7 @@ where
 
 impl<F, M> FBaseFooProcessorBuilder<F, M>
 where
-    F: FBaseFoo,
+    F: FBaseFoo + Clone,
 {
     pub fn middleware<U>(
         self,
@@ -300,42 +325,12 @@ where
     }
 }
 
-pub struct FBaseFooRequest {
-    ctx: FContext,
-    method: FBaseFooMethod,
-}
-
-impl FBaseFooRequest {
-    pub fn new(ctx: FContext, method: FBaseFooMethod) -> FBaseFooRequest {
-        FBaseFooRequest { ctx, method }
-    }
-}
-
-impl Request for FBaseFooRequest {
-    fn context(&mut self) -> &mut FContext {
-        &mut self.ctx
-    }
-
-    fn method_name(&self) -> &'static str {
-        match self.method {
-            FBaseFooMethod::BasePing(_) => "basePing",
-        }
-    }
-}
-
-pub enum FBaseFooMethod {
-    BasePing(FBaseFooPingArgs),
-}
-
-pub enum FBaseFooResponse {
-    BasePing(FBaseFooPingResult),
-}
-
-pub struct FBaseFooProcessorService<F: FBaseFoo>(F);
+#[derive(Clone)]
+pub struct FBaseFooProcessorService<F: FBaseFoo + Clone>(F);
 
 impl<F> Service for FBaseFooProcessorService<F>
 where
-    F: FBaseFoo,
+    F: FBaseFoo + Clone,
 {
     type Request = FBaseFooRequest;
     type Response = FBaseFooResponse;
@@ -351,7 +346,7 @@ where
             FBaseFooMethod::BasePing(args) => self
                 .0
                 .base_ping(&req.ctx)
-                .map(|res| FBaseFooResponse::BasePing(FBaseFooPingResult {})),
+                .map(|res| FBaseFooResponse::BasePing(FBaseFooBasePingResult {})),
         };
         future::result(result)
     }
@@ -359,7 +354,10 @@ where
 
 impl<S> FProcessor for FBaseFooProcessor<S>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>
+        + Clone
+        + Send
+        + 'static,
 {
     fn process<R, W>(
         &mut self,
@@ -367,8 +365,8 @@ where
         oprot: &mut FOutputProtocol<W>,
     ) -> thrift::Result<()>
     where
-        R: TReadTransport,
-        W: TWriteTransport,
+        R: thrift::transport::TReadTransport,
+        W: thrift::transport::TWriteTransport,
     {
         let ctx = iprot.read_request_header()?;
         let name = {
@@ -418,10 +416,10 @@ where
         oprot: &mut FOutputProtocol<W>,
     ) -> thrift::Result<()>
     where
-        R: TReadTransport,
-        W: TWriteTransport,
+        R: thrift::transport::TReadTransport,
+        W: thrift::transport::TWriteTransport,
     {
-        let mut args = FBaseFooPingArgs {};
+        let mut args = FBaseFooBasePingArgs {};
         let mut iproxy = iprot.t_protocol_proxy();
         args.read(&mut iproxy)?;
         iproxy.read_message_end()?;
@@ -459,10 +457,12 @@ where
                                 0,
                             ),
                         )
-                    }).and_then(|()| {
-                        let result = FBaseFooPingResult {};
+                    })
+                    .and_then(|()| {
+                        let result = FBaseFooBasePingResult {};
                         result.write(&mut oprot.t_protocol_proxy())
-                    }).and_then(|()| oprot.t_protocol_proxy().write_message_end())
+                    })
+                    .and_then(|()| oprot.t_protocol_proxy().write_message_end())
                     .and_then(|()| oprot.t_protocol_proxy().flush());
 
                 match write_result {

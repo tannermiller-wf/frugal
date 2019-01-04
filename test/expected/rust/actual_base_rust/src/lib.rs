@@ -14,7 +14,6 @@ extern crate futures;
 extern crate tower_service;
 extern crate tower_web;
 
-#[allow(unused)]
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CONST_I32_FROM_BASE: i32 = 582;
@@ -42,20 +41,13 @@ impl BaseHealthCondition {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Thing {
     pub an_id: Option<i32>,
     pub a_string: Option<String>,
 }
 
 impl Thing {
-    pub fn new() -> Thing {
-        Thing {
-            an_id: None,
-            a_string: None,
-        }
-    }
-
     pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         R: thrift::transport::TReadTransport,
@@ -102,9 +94,7 @@ impl Thing {
         W: thrift::transport::TWriteTransport,
         T: thrift::protocol::TOutputProtocol<W>,
     {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
-            name: "thing".into(),
-        })?;
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("thing"))?;
         self.write_field_1(oprot)?;
         self.write_field_2(oprot)?;
         oprot.write_field_stop()?;
@@ -148,16 +138,12 @@ impl Thing {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct NestedThing {
     pub things: Option<Vec<Thing>>,
 }
 
 impl NestedThing {
-    pub fn new() -> NestedThing {
-        NestedThing { things: None }
-    }
-
     pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         R: thrift::transport::TReadTransport,
@@ -186,7 +172,7 @@ impl NestedThing {
         let list_id = iprot.read_list_begin()?;
         let mut things = Vec::with_capacity(list_id.size as usize);
         for _ in 0..list_id.size {
-            let mut things_item = Thing::new();
+            let mut things_item = Thing::default();
             things_item.read(iprot)?;
             things.push(things_item);
         }
@@ -200,9 +186,7 @@ impl NestedThing {
         W: thrift::transport::TWriteTransport,
         T: thrift::protocol::TOutputProtocol<W>,
     {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
-            name: "nested_thing".into(),
-        })?;
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("nested_thing"))?;
         self.write_field_1(oprot)?;
         oprot.write_field_stop()?;
         oprot.write_struct_end()
@@ -234,14 +218,10 @@ impl NestedThing {
     }
 }
 
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ApiException {}
 
 impl ApiException {
-    pub fn new() -> ApiException {
-        ApiException {}
-    }
-
     pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     where
         R: thrift::transport::TReadTransport,
@@ -266,9 +246,7 @@ impl ApiException {
         W: thrift::transport::TWriteTransport,
         T: thrift::protocol::TOutputProtocol<W>,
     {
-        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier {
-            name: "api_exception".into(),
-        })?;
+        oprot.write_struct_begin(&thrift::protocol::TStructIdentifier::new("api_exception"))?;
         oprot.write_field_stop()?;
         oprot.write_struct_end()
     }
