@@ -535,13 +535,6 @@ func (g *Generator) generateStruct(s *parser.Struct, writeStructID func(string) 
 	// now the impl block
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", sName))
 
-	// constructor method
-	//buffer.WriteString(fmt.Sprintf("pub fn new() -> %s {\n", sName))
-	//buffer.WriteString(fmt.Sprintf("%s {\n", sName))
-	//buffer.WriteString(strings.Join(constructorExpressions, "\n"))
-	//buffer.WriteString("}\n")
-	//buffer.WriteString("}\n\n")
-
 	// primary read method
 	buffer.WriteString(
 		`pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
@@ -1195,7 +1188,154 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	}
 	buffer.WriteString("}\n\n")
 
-	// TODO: write the service client
+	// write the service client
+	buffer.WriteString(fmt.Sprintf(`pub struct F%sClient<S>
+				where
+					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
+				{
+					service: S,
+				}
+
+				impl<T> F%sClient<F%sClientService<T>>
+				where
+					T: FTransport,
+				{
+					pub fn new(provider: FServiceProvider<T>) -> F%sClient<F%sClientService<T>> {
+						F%sClient {
+							service: F%sClientService {
+								transport: provider.transport,
+								input_protocol_factory: provider.input_protocol_factory,
+								output_protocol_factory: provider.output_protocol_factory,
+							}
+						}
+					}
+				}
+
+				impl<S> FBaseFoo for F%sClient<S>
+				where
+					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
+				{
+				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName))
+	for _, method := range s.Methods {
+		constructorMethod := "new"
+		if len(method.Arguments) == 0 {
+			constructorMethod = "default"
+		}
+		nName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf(`%s {
+						let args = F%s%sArgs::%s(%s);
+						let request = F%sRequest::new(ctx.clone(), F%sMethod::%s(args));
+						`, g.generateMethodSignature(method), sName, nName, constructorMethod, commaSpaceJoin(g.generateMethodArguments(method.Arguments)), sName, sName, nName))
+		if len(s.Methods) == 1 {
+			buffer.WriteString("self.service.call(request).wait()?;\n")
+		} else {
+			outType := "()"
+			if len(method.Arguments) != 0 {
+				outType = "!"
+			}
+			buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait() {
+							F%sResponse::%s(%s) => %s,
+							_ => panic!("F%sClient::%s() received an incorrect response"),
+						}`, sName, nName, "_", outType, sName, methodName(method.Name)))
+		}
+		buffer.WriteString("Ok(())\n}\n\n")
+	}
+	buffer.WriteString(fmt.Sprintf(`}
+
+			pub struct F%sClientService<T>
+			where
+				T: FTransport,
+			{
+				transport: T,
+		    	input_protocol_factory: FInputProtocolFactory,
+		    	output_protocol_factory: FOutputProtocolFactory,
+			}
+
+			impl<T> F%sClientService<T>
+			where
+			    T: FTransport,
+			{
+			    fn call_delegate(&mut self, req: F%sRequest) -> Result<F%sResponse, thrift::Error> {
+					let F%sRequest { mut ctx, method } = req;
+					let mut buffer = FMemoryOutputBuffer::new(0);
+					{
+						let mut oprot = self.output_protocol_factory.get_protocol(&mut buffer);
+						oprot.write_request_header(&ctx)?;
+						let mut oproxy = oprot.t_protocol_proxy();
+						match method {
+
+			`, sName, sName, sName, sName, sName))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => {
+				oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(%q, thrift::protocol::TMessageType::Call, 0))?;
+				let args = F%s%sArgs {
+					`, sName, mName, method.Name, sName, mName))
+		for _, arg := range method.Arguments {
+			aName := methodName(arg.Name)
+			buffer.WriteString(fmt.Sprintf("%s: args.%s,\n", aName, aName))
+		}
+		buffer.WriteString(fmt.Sprintf(`};
+				args.write(&mut oproxy)?;
+			}
+			`))
+	}
+	buffer.WriteString(`};
+			oproxy.write_message_end()?;
+			oproxy.flush()?;
+		}
+		let mut result_transport = self.transport.request(&ctx, buffer.bytes())?;
+		{
+			let mut iprot = self
+				.input_protocol_factory
+				.get_protocol(&mut result_transport);
+			iprot.read_response_header(&mut ctx)?;
+			let mut iproxy = iprot.t_protocol_proxy();
+			let msg_id = iproxy.read_message_begin()?;
+			if msg_id.name != method.name() {
+				return Err(thrift::new_application_error(
+					thrift::ApplicationErrorKind::WrongMethodName,
+					format!("{} failed: wrong method name", method.name()),
+				));
+			}
+			match msg_id.message_type {
+				thrift::protocol::TMessageType::Exception => {
+					let err = thrift::Error::Application(
+						thrift::Error::read_application_error_from_in_protocol(&mut iproxy)?,
+					);
+					iproxy.read_message_end()?;
+					if frugal::errors::is_too_large_error(&err) {
+						Err(thrift::new_transport_error(
+							thrift::TransportErrorKind::SizeLimit,
+							err.to_string(),
+						))
+					} else {
+						Err(err)
+					}
+				}
+				thrift::protocol::TMessageType::Reply => match method {
+									`)
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf(`
+						F%sMethod::%s(_) => {
+							let mut result = F%s%sResult::default();
+							result.read(&mut iproxy)?;
+							iproxy.read_message_end()?;
+							Ok(F%sResponse::%s(result))
+						}`, sName, mName, sName, mName, sName, mName))
+	}
+	buffer.WriteString(`
+				}
+				_ => Err(thrift::new_application_error(
+					thrift::ApplicationErrorKind::InvalidMessageType,
+					format!("{} failed: invalid message type", method.name()),
+					)),
+				}
+			}
+		}
+	}
+	`)
 
 	// TODO: write the service processor
 

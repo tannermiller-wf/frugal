@@ -190,11 +190,11 @@ where
             let mut oproxy = oprot.t_protocol_proxy();
             match method {
                 FBaseFooMethod::BasePing(args) => {
-                    oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier {
-                        name: "basePing".into(),
-                        message_type: thrift::protocol::TMessageType::Call,
-                        sequence_number: 0,
-                    })?;
+                    oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+                        "basePing",
+                        thrift::protocol::TMessageType::Call,
+                        0,
+                    ))?;
                     let args = FBaseFooBasePingArgs {};
                     args.write(&mut oproxy)?;
                 }
@@ -231,16 +231,17 @@ where
                         Err(err)
                     }
                 }
-                thrift::protocol::TMessageType::Reply => {
-                    // TODO: This is wrong, this should be against each individual method
-                    let mut result = FBaseFooBasePingResult::default();
-                    result.read(&mut iproxy)?;
-                    iproxy.read_message_end()?;
-                    Ok(FBaseFooResponse::BasePing(result))
-                }
+                thrift::protocol::TMessageType::Reply => match method {
+                    FBaseFooMethod::BasePing(_) => {
+                        let mut result = FBaseFooBasePingResult::default();
+                        result.read(&mut iproxy)?;
+                        iproxy.read_message_end()?;
+                        Ok(FBaseFooResponse::BasePing(result))
+                    }
+                },
                 _ => Err(thrift::new_application_error(
                     thrift::ApplicationErrorKind::InvalidMessageType,
-                    "basePing failed: invalid message type",
+                    format!("{} failed: invalid message type", method.name()),
                 )),
             }
         }
