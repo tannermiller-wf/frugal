@@ -1364,9 +1364,257 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			self.call_delegate(req).into()
 		}
 	}
+	
 	`, sName, sName, sName))
 
-	// TODO: write the service processor
+	// write the service processor
+	buffer.WriteString(fmt.Sprintf(`#[derive(Clone)]
+	pub struct F%sProcessor<S>
+	where
+		S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
+	{
+		service: S,
+	}
+	
+	pub struct F%sProcessorBuilder<F, M>
+	where
+		F: F%s,
+	{
+		handler: F,
+		middleware: M,
+	}
+	
+	impl<F> F%sProcessorBuilder<F, middleware::Identity>
+	where
+		F: F%s,
+	{
+		pub fn new(handler: F) -> Self {
+			F%sProcessorBuilder {
+				handler,
+				middleware: middleware::Identity::new(),
+			}
+		}
+	}
+	
+	impl<F, M> F%sProcessorBuilder<F, M>
+	where
+		F: F%s + Clone,
+	{
+    	pub fn middleware<U>(
+    	    self,
+    	    middleware: U,
+    	) -> F%sProcessorBuilder<F, <M as Chain<U>>::Output>
+    	where
+    	    M: Chain<U>,
+    	{
+    	    F%sProcessorBuilder {
+    	        handler: self.handler,
+    	        middleware: self.middleware.chain(middleware),
+    	    }
+    	}
+
+    	pub fn build(self) -> F%sProcessor<M::Service>
+    	where
+    	    M: Middleware<
+    	        F%sProcessorService<F>,
+    	        Request = F%sRequest,
+    	        Response = F%sResponse,
+    	        Error = thrift::Error,
+    	    >,
+    	{
+    	    F%sProcessor {
+    	        service: self.middleware.wrap(F%sProcessorService(self.handler)),
+    	    }
+    	}
+	}
+
+	#[derive(Clone)]
+	pub struct F%sProcessorService<F: F%s + Clone>(F);
+	
+	impl<F> Service for F%sProcessorService<F>
+	where
+	    F: F%s + Clone,
+	{
+	    type Request = F%sRequest;
+	    type Response = F%sResponse;
+	    type Error = thrift::Error;
+	    type Future = FutureResult<Self::Response, Self::Error>;
+	
+	    fn poll_ready(&mut self) -> Poll<(), thrift::Error> {
+	        Ok(Async::Ready(()))
+	    }
+	
+	    fn call(&mut self, req: F%sRequest) -> FutureResult<F%sResponse, thrift::Error> {
+	        let result = match req.method {
+				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName,
+		sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName,
+		sName, sName, sName))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		args := ""
+		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => self
+			.0
+			.%s(&req.ctx,%s)
+			.map(|res| F%sResponse::%s(F%s%sResult {`,
+			sName, mName, methodName(method.Name), args, sName, mName, sName, mName))
+		if method.ReturnType != nil {
+			buffer.WriteString("success: Some(res),\n")
+		}
+		for _, _ = range method.Exceptions {
+			// TODO: How are we getting exceptions out? Are they part of the Result?
+			//buffer.WriteString(fmt.Sprintf("%s,\n", methodName(exc.Name)))
+		}
+		buffer.WriteString(fmt.Sprintf(`})),
+		`))
+	}
+	buffer.WriteString(fmt.Sprintf(`};
+			future::result(result)
+		}
+	}
+	
+	impl<S> FProcessor for F%sProcessor<S>
+	where
+		S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>
+			+ Clone
+			+ Send
+			+ 'static,
+	{
+		fn process<R, W>(
+			&mut self,
+			iprot: &mut FInputProtocol<R>,
+			oprot: &mut FOutputProtocol<W>,
+		) -> thrift::Result<()>
+		where
+			R: thrift::transport::TReadTransport,
+			W: thrift::transport::TWriteTransport,
+		{
+			let ctx = iprot.read_request_header()?;
+			let name = {
+				let mut iproxy = iprot.t_protocol_proxy();
+				iproxy.read_message_begin().map(|tmid| tmid.name)?
+			};
+
+			match &*name {
+		`, sName, sName, sName))
+	for _, method := range s.Methods {
+		buffer.WriteString(fmt.Sprintf("%q => self.%s(&ctx, iprot, oprot),\n", method.Name, methodName(method.Name)))
+	}
+	buffer.WriteString(fmt.Sprintf(`_ => {
+					error!(
+						"frugal: client invoked unknown function {} on request with correlation id {}",
+						&name,
+						ctx.correlation_id()
+					);
+					let mut iproxy = iprot.t_protocol_proxy();
+					iproxy.skip(thrift::protocol::TType::Struct)?;
+					iproxy.read_message_end()?;
+
+					oprot.write_response_header(&ctx)?;
+					let mut oproxy = oprot.t_protocol_proxy();
+					oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+						&name as &str,
+						thrift::protocol::TMessageType::Exception,
+						0,
+					))?;
+					let ex = thrift::ApplicationError::new(
+						thrift::ApplicationErrorKind::UnknownMethod,
+						format!("Unknown function {}", &name),
+					);
+					thrift::Error::write_application_error_to_out_protocol(&ex, &mut oproxy)?;
+					oproxy.write_message_end()?;
+					oproxy.flush()
+				}
+			}
+		}
+	}
+	
+	impl<S> F%sProcessor<S>
+	where
+		S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
+	{
+		`, sName, sName, sName))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		buffer.WriteString(fmt.Sprintf(`fn %s<R, W>(
+			        &mut self,
+			        ctx: &FContext,
+			        iprot: &mut FInputProtocol<R>,
+			        oprot: &mut FOutputProtocol<W>,
+			    ) -> thrift::Result<()>
+			    where
+			        R: thrift::transport::TReadTransport,
+			        W: thrift::transport::TWriteTransport,
+			    {
+			        let mut args = F%s%sArgs {};
+			        let mut iproxy = iprot.t_protocol_proxy();
+			        args.read(&mut iproxy)?;
+			        iproxy.read_message_end()?;
+			        let req = F%sRequest {
+			            ctx: ctx.clone(),
+			            method: F%sMethod::%s(args),
+			        };
+			        match self.service.call(req).wait() {
+			            Err(thrift::Error::User(err)) => {
+			                error!(
+			                    "{} {}: {}",
+			                    errors::USER_ERROR_DESCRIPTION,
+			                    ctx.correlation_id(),
+			                    err.description()
+			                );
+			                Ok(())
+			            }
+			            Err(err) => {
+			                error!(
+			                    "{} {}: {}",
+			                    errors::USER_ERROR_DESCRIPTION,
+			                    ctx.correlation_id(),
+			                    err.description()
+			                );
+			                Ok(())
+			            }
+			            Ok(response) => {
+			                let write_result = oprot
+			                    .write_response_header(&ctx)
+			                    .and_then(|()| {
+			                        oprot.t_protocol_proxy().write_message_begin(
+			                            &thrift::protocol::TMessageIdentifier::new(
+			                                "basePing",
+			                                thrift::protocol::TMessageType::Reply,
+			                                0,
+			                            ),
+			                        )
+			                    })
+			                    .and_then(|()| {
+			                        let result = F%s%sResult {};
+			                        result.write(&mut oprot.t_protocol_proxy())
+			                    })
+			                    .and_then(|()| oprot.t_protocol_proxy().write_message_end())
+			                    .and_then(|()| oprot.t_protocol_proxy().flush());
+			
+			                match write_result {
+			                    Err(err) => {
+			                        if errors::is_too_large_error(&err) {
+			                            errors::write_application_error(
+			                                "basePing",
+			                                &ctx,
+			                                &thrift::ApplicationError::new(
+			                                    thrift::ApplicationErrorKind::Unknown,
+			                                    errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
+			                                ),
+			                                oprot,
+			                            )
+			                        } else {
+			                            Err(err)
+			                        }
+			                    }
+			                    Ok(_) => Ok(()),
+			                }
+			            }
+			        }
+			    }
+			`, methodName(method.Name), sName, mName, sName, sName, mName, sName, mName))
+	}
+	buffer.WriteString(`}`)
 
 	_, err := file.Write(buffer.Bytes())
 	return err
