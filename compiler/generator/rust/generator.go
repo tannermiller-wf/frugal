@@ -1037,6 +1037,7 @@ func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) err
 		 use futures::future::{self, FutureResult};
 		 use futures::{Async, Future, Poll};
 		 use thrift;
+		 use thrift::protocol::{TInputProtocol, TOutputProtocol};
 		 use tower_service::Service;
 		 use tower_web::middleware::{self, Middleware};
 		 use tower_web::util::Chain;
@@ -1155,7 +1156,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 				match *self {
 					`, sName))
 	for _, method := range s.Methods {
-		buffer.WriteString(fmt.Sprintf("%s(_) => %q,\n", typeName(method.Name), method.Name))
+		buffer.WriteString(fmt.Sprintf("F%sMethod::%s(_) => %q,\n", sName, typeName(method.Name), method.Name))
 	}
 	buffer.WriteString("}\n}\n}\n\n")
 
@@ -1256,15 +1257,23 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			    T: FTransport,
 			{
 			    fn call_delegate(&mut self, req: F%sRequest) -> Result<F%sResponse, thrift::Error> {
+					enum ResultSignifier {
+						`, sName, sName, sName, sName))
+	for _, method := range s.Methods {
+		buffer.WriteString(fmt.Sprintf("%s,\n", typeName(method.Name)))
+	}
+	buffer.WriteString(fmt.Sprintf(`
+					};
 					let F%sRequest { mut ctx, method } = req;
+					let method_name = method.name();
 					let mut buffer = FMemoryOutputBuffer::new(0);
-					{
+					let signifier = {
 						let mut oprot = self.output_protocol_factory.get_protocol(&mut buffer);
 						oprot.write_request_header(&ctx)?;
 						let mut oproxy = oprot.t_protocol_proxy();
-						match method {
+						let signifier = match method {
 
-			`, sName, sName, sName, sName, sName))
+			`, sName))
 	for _, method := range s.Methods {
 		mName := typeName(method.Name)
 		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => {
@@ -1277,13 +1286,15 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 		}
 		buffer.WriteString(fmt.Sprintf(`};
 				args.write(&mut oproxy)?;
+				ResultSignifier::%s
 			}
-			`))
+			`, mName))
 	}
 	buffer.WriteString(`};
 			oproxy.write_message_end()?;
 			oproxy.flush()?;
-		}
+			signifier
+		};
 		let mut result_transport = self.transport.request(&ctx, buffer.bytes())?;
 		{
 			let mut iprot = self
@@ -1292,10 +1303,10 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			iprot.read_response_header(&mut ctx)?;
 			let mut iproxy = iprot.t_protocol_proxy();
 			let msg_id = iproxy.read_message_begin()?;
-			if msg_id.name != method.name() {
+			if msg_id.name != method_name {
 				return Err(thrift::new_application_error(
 					thrift::ApplicationErrorKind::WrongMethodName,
-					format!("{} failed: wrong method name", method.name()),
+					format!("{} failed: wrong method name", method_name),
 				));
 			}
 			match msg_id.message_type {
@@ -1313,29 +1324,47 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 						Err(err)
 					}
 				}
-				thrift::protocol::TMessageType::Reply => match method {
+				thrift::protocol::TMessageType::Reply => match signifier {
 									`)
 	for _, method := range s.Methods {
 		mName := typeName(method.Name)
 		buffer.WriteString(fmt.Sprintf(`
-						F%sMethod::%s(_) => {
+						ResultSignifier::%s => {
 							let mut result = F%s%sResult::default();
 							result.read(&mut iproxy)?;
 							iproxy.read_message_end()?;
 							Ok(F%sResponse::%s(result))
-						}`, sName, mName, sName, mName, sName, mName))
+						}`, mName, sName, mName, sName, mName))
 	}
-	buffer.WriteString(`
+	buffer.WriteString(fmt.Sprintf(`
 				}
 				_ => Err(thrift::new_application_error(
 					thrift::ApplicationErrorKind::InvalidMessageType,
-					format!("{} failed: invalid message type", method.name()),
+					format!("{} failed: invalid message type", method_name),
 					)),
 				}
 			}
 		}
 	}
-	`)
+
+	impl<T> Service for F%sClientService<T>
+	where
+		T: FTransport,
+	{
+		type Request = F%sRequest;
+		type Response = F%sResponse;
+		type Error = thrift::Error;
+		type Future = FutureResult<Self::Response, Self::Error>;
+
+		fn poll_ready(&mut self) -> Poll<(), thrift::Error> {
+			Ok(Async::Ready(()))
+		}
+
+		fn call(&mut self, req: Self::Request) -> Self::Future {
+			self.call_delegate(req).into()
+		}
+	}
+	`, sName, sName, sName))
 
 	// TODO: write the service processor
 

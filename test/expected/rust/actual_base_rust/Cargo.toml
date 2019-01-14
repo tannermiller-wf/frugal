@@ -3,7 +3,7 @@ name = "rust"
 version = "2.22.0"
 
 [dependencies]
-thrift = { path = "/home/tanner/code/thrift/lib/rs" }
+thrift = { path = "../../../../lib/rust/thrift" }
 frugal = { path = "../../../../lib/rust" }
 lazy_static = "1.2"
 log = "0.4"

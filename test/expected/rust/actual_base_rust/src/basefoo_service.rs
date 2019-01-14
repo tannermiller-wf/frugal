@@ -9,6 +9,7 @@ use std::error::Error;
 use futures::future::{self, FutureResult};
 use futures::{Async, Future, Poll};
 use thrift;
+use thrift::protocol::{TInputProtocol, TOutputProtocol};
 use tower_service::Service;
 use tower_web::middleware::{self, Middleware};
 use tower_web::util::Chain;
@@ -104,7 +105,7 @@ pub enum FBaseFooMethod {
 impl FBaseFooMethod {
     fn name(&self) -> &'static str {
         match *self {
-            BasePing(_) => "basePing",
+            FBaseFooMethod::BasePing(_) => "basePing",
         }
     }
 }
@@ -182,13 +183,17 @@ where
     T: FTransport,
 {
     fn call_delegate(&mut self, req: FBaseFooRequest) -> Result<FBaseFooResponse, thrift::Error> {
+        enum ResultSignifier {
+            BasePing,
+        };
         let FBaseFooRequest { mut ctx, method } = req;
+        let method_name = method.name();
         let mut buffer = FMemoryOutputBuffer::new(0);
-        {
+        let signifier = {
             let mut oprot = self.output_protocol_factory.get_protocol(&mut buffer);
             oprot.write_request_header(&ctx)?;
             let mut oproxy = oprot.t_protocol_proxy();
-            match method {
+            let signifier = match method {
                 FBaseFooMethod::BasePing(args) => {
                     oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
                         "basePing",
@@ -197,11 +202,13 @@ where
                     ))?;
                     let args = FBaseFooBasePingArgs {};
                     args.write(&mut oproxy)?;
+                    ResultSignifier::BasePing
                 }
             };
             oproxy.write_message_end()?;
             oproxy.flush()?;
-        }
+            signifier
+        };
         let mut result_transport = self.transport.request(&ctx, buffer.bytes())?;
         {
             let mut iprot = self
@@ -210,10 +217,10 @@ where
             iprot.read_response_header(&mut ctx)?;
             let mut iproxy = iprot.t_protocol_proxy();
             let msg_id = iproxy.read_message_begin()?;
-            if msg_id.name != method.name() {
+            if msg_id.name != method_name {
                 return Err(thrift::new_application_error(
                     thrift::ApplicationErrorKind::WrongMethodName,
-                    format!("{} failed: wrong method name", method.name()),
+                    format!("{} failed: wrong method name", method_name),
                 ));
             }
             match msg_id.message_type {
@@ -231,8 +238,8 @@ where
                         Err(err)
                     }
                 }
-                thrift::protocol::TMessageType::Reply => match method {
-                    FBaseFooMethod::BasePing(_) => {
+                thrift::protocol::TMessageType::Reply => match signifier {
+                    ResultSignifier::BasePing => {
                         let mut result = FBaseFooBasePingResult::default();
                         result.read(&mut iproxy)?;
                         iproxy.read_message_end()?;
@@ -241,7 +248,7 @@ where
                 },
                 _ => Err(thrift::new_application_error(
                     thrift::ApplicationErrorKind::InvalidMessageType,
-                    format!("{} failed: invalid message type", method.name()),
+                    format!("{} failed: invalid message type", method_name),
                 )),
             }
         }
@@ -261,7 +268,7 @@ where
         Ok(Async::Ready(()))
     }
 
-    fn call(&mut self, req: FBaseFooRequest) -> FutureResult<FBaseFooResponse, thrift::Error> {
+    fn call(&mut self, req: Self::Request) -> Self::Future {
         self.call_delegate(req).into()
     }
 }
