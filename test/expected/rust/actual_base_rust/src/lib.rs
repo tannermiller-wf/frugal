@@ -110,11 +110,11 @@ impl Thing {
             Some(an_id) => an_id,
             None => return Ok(()),
         };
-        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier {
-            name: Some("an_id".into()),
-            field_type: thrift::protocol::TType::I32,
-            id: Some(1),
-        })?;
+        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier::new(
+            "an_id",
+            thrift::protocol::TType::I32,
+            1,
+        ))?;
         oprot.write_i32(an_id)?;
         oprot.write_field_end()
     }
@@ -128,11 +128,11 @@ impl Thing {
             Some(ref a_string) => a_string,
             None => return Ok(()),
         };
-        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier {
-            name: Some("a_string".into()),
-            field_type: thrift::protocol::TType::String,
-            id: Some(2),
-        })?;
+        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier::new(
+            "a_string",
+            thrift::protocol::TType::String,
+            2,
+        ))?;
         oprot.write_string(a_string)?;
         oprot.write_field_end()
     }
@@ -201,15 +201,15 @@ impl NestedThing {
             Some(ref things) => things,
             None => return Ok(()),
         };
-        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier {
-            name: Some("things".into()),
-            field_type: thrift::protocol::TType::List,
-            id: Some(1),
-        })?;
-        oprot.write_list_begin(&thrift::protocol::TListIdentifier {
-            element_type: thrift::protocol::TType::Struct,
-            size: things.len() as i32,
-        })?;
+        oprot.write_field_begin(&thrift::protocol::TFieldIdentifier::new(
+            "things",
+            thrift::protocol::TType::List,
+            1,
+        ))?;
+        oprot.write_list_begin(&thrift::protocol::TListIdentifier::new(
+            thrift::protocol::TType::Struct,
+            things.len() as i32,
+        ))?;
         for things_item in things {
             things_item.write(oprot)?;
         }

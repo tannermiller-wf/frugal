@@ -502,7 +502,15 @@ func (g *Generator) generateStruct(s *parser.Struct, writeStructID func(string) 
 	g.writeDocComment(&buffer, s.Comment)
 	g.writeAnnotations(&buffer, s.Annotations)
 	sName := typeName(s.Name)
-	buffer.WriteString("#[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]\n")
+	deriveDefault := "Default, "
+	for _, f := range s.Fields {
+		if f.Default != nil {
+
+			deriveDefault = ""
+			break
+		}
+	}
+	buffer.WriteString(fmt.Sprintf("#[derive(Clone, Debug, %sEq, Ord, PartialEq, PartialOrd)]\n", deriveDefault))
 	buffer.WriteString(fmt.Sprintf("pub struct %s {\n", sName))
 	constructorExpressions := make([]string, 0, len(s.Fields))
 	for _, f := range s.Fields {
@@ -513,24 +521,32 @@ func (g *Generator) generateStruct(s *parser.Struct, writeStructID func(string) 
 		buffer.WriteString(fmt.Sprintf("pub %s: %s,\n", fieldName, t))
 
 		// the following are needed in the impl block
-		defaultValue := ""
-		if f.Default != nil {
-			defaultValue = g.generateRustLiteral(f.Type, f.Default, false)
-			if f.Modifier == parser.Required {
-				defaultValue = fmt.Sprintf("%s", defaultValue)
+		if deriveDefault == "" {
+			if f.Default != nil {
+				defaultValue := g.generateRustLiteral(f.Type, f.Default, false)
+				if f.Modifier != parser.Required {
+					defaultValue = fmt.Sprintf("Some(%s)", defaultValue)
+				}
+				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s,", fieldName, defaultValue))
 			} else {
-				defaultValue = fmt.Sprintf("Some(%s)", defaultValue)
-			}
-			constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s,", fieldName, defaultValue))
-		} else {
-			if f.Modifier == parser.Required {
-				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: %s,", fieldName, g.zeroValue(f.Type)))
-			} else {
-				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: None,", fieldName))
+				constructorExpressions = append(constructorExpressions, fmt.Sprintf("%s: Default::default(),", fieldName))
 			}
 		}
 	}
 	buffer.WriteString("}\n\n")
+
+	// explicitly impl Default if defaults are set
+	if deriveDefault == "" {
+		buffer.WriteString(fmt.Sprintf(`impl Default for %s {
+			fn default() -> %s {
+				%s {
+					%s
+				}
+			}
+		}
+		
+		`, sName, sName, sName, strings.Join(constructorExpressions, "\n")))
+	}
 
 	// now the impl block
 	buffer.WriteString(fmt.Sprintf("impl %s {\n", sName))
@@ -647,11 +663,11 @@ func (g *Generator) generateStruct(s *parser.Struct, writeStructID func(string) 
 			))
 		}
 		buffer.WriteString(fmt.Sprintf(
-			`oprot.write_field_begin(&thrift::protocol::TFieldIdentifier {
-				name: Some(%q.into()),
-				field_type: thrift::protocol::TType::%s,
-				id: Some(%d),
-			})?;
+			`oprot.write_field_begin(&thrift::protocol::TFieldIdentifier::new(
+				%q,
+				thrift::protocol::TType::%s,
+				%d,
+			))?;
 			`,
 			f.Name, g.ttypeToEnum(fType), f.ID,
 		))
@@ -789,10 +805,10 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 		itemName := fmt.Sprintf("%s_item", fieldName)
 		vType := g.Frugal.UnderlyingType(fType.ValueType)
 		buffer.WriteString(fmt.Sprintf(
-			`oprot.write_list_begin(&thrift::protocol::TListIdentifier{
-				element_type: thrift::protocol::TType::%s,
-				size: %s.len() as i32,
-			 })?;
+			`oprot.write_list_begin(&thrift::protocol::TListIdentifier::new(
+				thrift::protocol::TType::%s,
+				%s.len() as i32,
+			 ))?;
 			 for %s in %s {
 			 `,
 			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
@@ -806,10 +822,10 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 		itemName := fmt.Sprintf("%s_item", fieldName)
 		vType := g.Frugal.UnderlyingType(fType.ValueType)
 		buffer.WriteString(fmt.Sprintf(
-			`oprot.write_set_begin(&thrift::protocol::TSetIdentifier{
-				element_type: thrift::protocol::TType::%s,
-				size: %s.len() as i32,
-			 })?;
+			`oprot.write_set_begin(&thrift::protocol::TSetIdentifier::new(
+				thrift::protocol::TType::%s,
+				%s.len() as i32,
+			 ))?;
 			 for %s in %s {
 			 `,
 			g.ttypeToEnum(vType), fieldName, itemName, fieldName,
@@ -825,11 +841,11 @@ func (g *Generator) generateFieldWriteDefinition(buffer *bytes.Buffer, fieldName
 		valuename := fmt.Sprintf("%s_value", fieldName)
 		vType := g.Frugal.UnderlyingType(fType.ValueType)
 		buffer.WriteString(fmt.Sprintf(
-			`oprot.write_map_begin(&thrift::protocol::TMapIdentifier {
-				key_type: Some(thrift::protocol::TType::%s),
-				value_type: Some(thrift::protocol::TType::%s),
-				size: %s.len() as i32,
-			 })?;
+			`oprot.write_map_begin(&thrift::protocol::TMapIdentifier::new(
+				thrift::protocol::TType::%s,
+				thrift::protocol::TType::%s,
+				%s.len() as i32,
+			 ))?;
 			 for (%s, %s) in %s {
 			 `,
 			g.ttypeToEnum(kType), g.ttypeToEnum(vType), fieldName, keyname, valuename, fieldName,
@@ -898,9 +914,10 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 
 	// read methods
 	buffer.WriteString(fmt.Sprintf(
-		`pub fn read<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+		`pub fn read<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     	 where
-    	     T: thrift::protocol::TInputProtocol,
+		 	 R: thrift::transport::TReadTransport,
+    	     T: thrift::protocol::TInputProtocol<R>,
     	 {
     	     iprot.read_struct_begin()?;
     	     let mut is_set = false;
@@ -948,9 +965,10 @@ func (g *Generator) GenerateUnion(union *parser.Struct) error {
 	// field read methods
 	for _, f := range union.Fields {
 		buffer.WriteString(fmt.Sprintf(
-			`fn read_field_%d<T>(&mut self, iprot: &mut T) -> thrift::Result<()>
+			`fn read_field_%d<R, T>(&mut self, iprot: &mut T) -> thrift::Result<()>
     	 	 where
-    	 	     T: thrift::protocol::TInputProtocol,
+			 	 R: thrift::transport::TReadTransport,
+    	 	     T: thrift::protocol::TInputProtocol<R>,
     	 	 {
 			 `,
 			f.ID,
@@ -1212,11 +1230,11 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 					}
 				}
 
-				impl<S> FBaseFoo for F%sClient<S>
+				impl<S> F%s for F%sClient<S>
 				where
 					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
 				{
-				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName))
+				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName))
 	for _, method := range s.Methods {
 		constructorMethod := "new"
 		if len(method.Arguments) == 0 {
@@ -1243,7 +1261,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
 						return Ok(success);
 					};
-					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for %q")))
+					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for \"%s\"")))
 				}`, mName))
 		}
 		if len(s.Methods) > 1 {
@@ -1251,10 +1269,9 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 					`, sName, methodName(method.Name)))
 		}
 		// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
-		buffer.WriteString("}\n\n")
+		buffer.WriteString("}\n}\n\n")
 	}
 	buffer.WriteString(fmt.Sprintf(`}
-			}
 
 			pub struct F%sClientService<T>
 			where
