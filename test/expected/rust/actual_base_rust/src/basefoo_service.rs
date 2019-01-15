@@ -164,8 +164,9 @@ where
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
         let args = FBaseFooBasePingArgs::default();
         let request = FBaseFooRequest::new(ctx.clone(), FBaseFooMethod::BasePing(args));
-        self.service.call(request).wait()?;
-        Ok(())
+        match self.service.call(request).wait()? {
+            FBaseFooResponse::BasePing(result) => Ok(()),
+        }
     }
 }
 

@@ -1222,26 +1222,39 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 		if len(method.Arguments) == 0 {
 			constructorMethod = "default"
 		}
-		nName := typeName(method.Name)
+		mName := typeName(method.Name)
 		buffer.WriteString(fmt.Sprintf(`%s {
 						let args = F%s%sArgs::%s(%s);
 						let request = F%sRequest::new(ctx.clone(), F%sMethod::%s(args));
-						`, g.generateMethodSignature(method), sName, nName, constructorMethod, commaSpaceJoin(g.generateMethodArguments(method.Arguments)), sName, sName, nName))
-		if len(s.Methods) == 1 {
-			buffer.WriteString("self.service.call(request).wait()?;\n")
+						`, g.generateMethodSignature(method), sName, mName, constructorMethod, commaSpaceJoin(g.generateMethodArguments(method.Arguments)), sName, sName, mName))
+		buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait()? {
+							F%sResponse::%s(result) => `, sName, mName))
+		if method.ReturnType == nil {
+			buffer.WriteString("Ok(()),\n")
 		} else {
-			outType := "()"
-			if len(method.Arguments) != 0 {
-				outType = "!"
+			buffer.WriteString("{\n")
+			for _, exc := range method.Exceptions {
+				eName := methodName(exc.Name)
+				buffer.WriteString(fmt.Sprintf(`if let Some(%s) = result.%s {
+						return Err(thrift::Error::User(Box::new(%s)));
+					};
+					`, eName, eName, eName))
 			}
-			buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait() {
-							F%sResponse::%s(%s) => %s,
-							_ => panic!("F%sClient::%s() received an incorrect response"),
-						}`, sName, nName, "_", outType, sName, methodName(method.Name)))
+			buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
+						return Ok(success);
+					};
+					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for %q")))
+				}`, mName))
 		}
-		buffer.WriteString("Ok(())\n}\n\n")
+		if len(s.Methods) > 1 {
+			buffer.WriteString(fmt.Sprintf(`_ => panic!("F%sClient::%s() received an incorrect response"),
+					`, sName, methodName(method.Name)))
+		}
+		// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
+		buffer.WriteString("}\n\n")
 	}
 	buffer.WriteString(fmt.Sprintf(`}
+			}
 
 			pub struct F%sClientService<T>
 			where
@@ -1337,7 +1350,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 						}`, mName, sName, mName, sName, mName))
 	}
 	buffer.WriteString(fmt.Sprintf(`
-				}
+				},
 				_ => Err(thrift::new_application_error(
 					thrift::ApplicationErrorKind::InvalidMessageType,
 					format!("{} failed: invalid message type", method_name),
