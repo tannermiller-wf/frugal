@@ -1,4 +1,0 @@
-
-const i16 HELLO = 7
-
-typedef bool Foo
