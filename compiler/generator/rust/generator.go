@@ -158,7 +158,7 @@ func (g *Generator) crateName() string {
 		crateName = strings.Join(path, "_")
 	}
 
-	return crateName
+	return methodName(crateName)
 }
 
 func (g *Generator) GetOutputDir(dir string) string {
@@ -1151,7 +1151,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	for _, method := range s.Methods {
 		g.writeDocComment(&buffer, method.Comment)
 		g.writeAnnotations(&buffer, method.Annotations)
-		buffer.WriteString(fmt.Sprintf("%s;\n", g.generateMethodSignature(method)))
+		buffer.WriteString(fmt.Sprintf("%s;\n\n", g.generateMethodSignature(method)))
 	}
 	buffer.WriteString("}\n\n")
 
