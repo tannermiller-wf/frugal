@@ -48,10 +48,10 @@
 #![crate_type = "lib"]
 #![doc(test(attr(allow(unused_variables), deny(warnings))))]
 
-extern crate byteorder;
-extern crate integer_encoding;
-extern crate threadpool;
-extern crate try_from;
+
+
+
+
 
 //#[macro_use]
 //extern crate log;
@@ -75,7 +75,7 @@ pub mod protocol;
 pub mod transport;
 
 mod errors;
-pub use errors::*;
+pub use crate::errors::*;
 
 //mod autogen;
 //pub use autogen::*;

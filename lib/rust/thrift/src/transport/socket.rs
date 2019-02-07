@@ -20,7 +20,7 @@ use std::io;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpStream};
 
-use {TransportErrorKind, new_transport_error};
+use crate::{TransportErrorKind, new_transport_error};
 use super::{ReadHalf, TIoChannel, WriteHalf};
 
 /// Bidirectional TCP/IP channel.
@@ -80,7 +80,7 @@ impl TTcpChannel {
     }
 
     /// Connect to `remote_address`, which should have the form `host:port`.
-    pub fn open(&mut self, remote_address: &str) -> ::Result<()> {
+    pub fn open(&mut self, remote_address: &str) -> crate::Result<()> {
         if self.stream.is_some() {
             Err(
                 new_transport_error(
@@ -103,7 +103,7 @@ impl TTcpChannel {
     ///
     /// Both send and receive halves are closed, and this instance can no
     /// longer be used to communicate with another endpoint.
-    pub fn close(&mut self) -> ::Result<()> {
+    pub fn close(&mut self) -> crate::Result<()> {
         self.if_set(|s| s.shutdown(Shutdown::Both))
             .map_err(From::from)
     }
@@ -122,7 +122,7 @@ impl TTcpChannel {
 }
 
 impl TIoChannel for TTcpChannel {
-    fn split(self) -> ::Result<(ReadHalf<Self>, WriteHalf<Self>)>
+    fn split(self) -> crate::Result<(ReadHalf<Self>, WriteHalf<Self>)>
     where
         Self: Sized,
     {

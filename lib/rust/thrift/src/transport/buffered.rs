@@ -139,7 +139,7 @@ impl TBufferedReadTransportFactory {
 
 impl TReadTransportFactory for TBufferedReadTransportFactory {
     /// Create a `TBufferedReadTransport`.
-    fn create(&self, channel: Box<Read + Send>) -> Box<TReadTransport + Send> {
+    fn create(&self, channel: Box<dyn Read + Send>) -> Box<dyn TReadTransport + Send> {
         Box::new(TBufferedReadTransport::new(channel))
     }
 }
@@ -254,7 +254,7 @@ impl TBufferedWriteTransportFactory {
 
 impl TWriteTransportFactory for TBufferedWriteTransportFactory {
     /// Create a `TBufferedWriteTransport`.
-    fn create(&self, channel: Box<Write + Send>) -> Box<TWriteTransport + Send> {
+    fn create(&self, channel: Box<dyn Write + Send>) -> Box<dyn TWriteTransport + Send> {
         Box::new(TBufferedWriteTransport::new(channel))
     }
 }
@@ -264,7 +264,7 @@ mod tests {
     use std::io::{Read, Write};
 
     use super::*;
-    use transport::TBufferChannel;
+    use crate::transport::TBufferChannel;
 
     #[test]
     fn must_return_zero_if_read_buffer_is_empty() {

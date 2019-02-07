@@ -2,8 +2,8 @@ use thrift;
 use thrift::protocol::TOutputProtocol;
 use thrift::transport::TWriteTransport;
 
-use context::FContext;
-use protocol::FOutputProtocol;
+use crate::context::FContext;
+use crate::protocol::FOutputProtocol;
 
 pub const USER_ERROR_DESCRIPTION: &str =
     "frugal: user handler code returned unhandled error on request with correlation id";

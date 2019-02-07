@@ -10,8 +10,8 @@ use thrift::protocol::{
 };
 use thrift::transport::{TReadTransport, TWriteTransport};
 
-use context::{self, FContext};
-use util::{read_exact, read_size};
+use crate::context::{self, FContext};
+use crate::util::{read_exact, read_size};
 
 const PROTOCOL_V0: u8 = 0x00;
 
@@ -525,7 +525,7 @@ mod test {
     use thrift::protocol::{TCompactInputProtocolFactory, TCompactOutputProtocolFactory};
 
     use super::*;
-    use context::{FContext, CID_HEADER, OP_ID_HEADER};
+    use crate::context::{FContext, CID_HEADER, OP_ID_HEADER};
 
     static BASIC_FRAME: &'static [u8] = &[
         0, 0, 0, 0, 14, 0, 0, 0, 3, 102, 111, 111, 0, 0, 0, 3, 98, 97, 114,

@@ -8,12 +8,13 @@ use nats::{Client, TlsConfig};
 use thrift;
 
 use super::build_client;
-use context::{FContext, OP_ID_HEADER};
-use protocol::ProtocolMarshaler;
-use transport::FTransport;
+use crate::context::{FContext, OP_ID_HEADER};
+use crate::protocol::ProtocolMarshaler;
+use crate::transport::FTransport;
 
 pub const NATS_MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
+#[derive(Clone)]
 pub struct FNatsTransport {
     subject: String,
     inbox: String,

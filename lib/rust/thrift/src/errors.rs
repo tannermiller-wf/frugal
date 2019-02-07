@@ -21,8 +21,8 @@ use std::fmt::{Debug, Display, Formatter};
 use std::{error, fmt, io, string};
 use try_from::TryFrom;
 
-use protocol::{TFieldIdentifier, TInputProtocol, TOutputProtocol, TStructIdentifier, TType};
-use transport::{TReadTransport, TWriteTransport};
+use crate::protocol::{TFieldIdentifier, TInputProtocol, TOutputProtocol, TStructIdentifier, TType};
+use crate::transport::{TReadTransport, TWriteTransport};
 
 // FIXME: should all my error structs impl error::Error as well?
 // FIXME: should all fields in TransportError, ProtocolError and ApplicationError be optional?
@@ -192,7 +192,7 @@ pub enum Error {
     /// functions are automatically returned as an `ApplicationError`.
     Application(ApplicationError),
     /// IDL-defined exception structs.
-    User(Box<error::Error + Sync + Send>),
+    User(Box<dyn error::Error + Sync + Send>),
 }
 
 impl Error {
@@ -200,8 +200,8 @@ impl Error {
     ///
     /// Application code **should never** call this method directly.
     pub fn read_application_error_from_in_protocol<R>(
-        i: &mut TInputProtocol<R>,
-    ) -> ::Result<ApplicationError>
+        i: &mut dyn TInputProtocol<R>,
+    ) -> crate::Result<ApplicationError>
     where
         R: TReadTransport,
     {
@@ -251,8 +251,8 @@ impl Error {
     /// Application code **should never** call this method directly.
     pub fn write_application_error_to_out_protocol<W>(
         e: &ApplicationError,
-        o: &mut TOutputProtocol<W>,
-    ) -> ::Result<()>
+        o: &mut dyn TOutputProtocol<W>,
+    ) -> crate::Result<()>
     where
         W: TWriteTransport,
     {
@@ -290,7 +290,7 @@ impl error::Error for Error {
 }
 
 impl Debug for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self {
             Error::Transport(ref e) => Debug::fmt(e, f),
             Error::Protocol(ref e) => Debug::fmt(e, f),
@@ -301,7 +301,7 @@ impl Debug for Error {
 }
 
 impl Display for Error {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match *self {
             Error::Transport(ref e) => Display::fmt(e, f),
             Error::Protocol(ref e) => Display::fmt(e, f),
@@ -411,7 +411,7 @@ impl TransportError {
 }
 
 impl Display for TransportError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.description())
     }
 }
@@ -541,7 +541,7 @@ impl ProtocolError {
 }
 
 impl Display for ProtocolError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.description())
     }
 }
@@ -645,7 +645,7 @@ impl ApplicationError {
 }
 
 impl Display for ApplicationError {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.description())
     }
 }

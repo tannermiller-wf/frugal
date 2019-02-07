@@ -1,7 +1,7 @@
 use thrift;
 use thrift::transport::{TReadTransport, TWriteTransport};
 
-use protocol::{FInputProtocol, FOutputProtocol};
+use crate::protocol::{FInputProtocol, FOutputProtocol};
 
 pub trait FProcessor: Clone + Send + 'static {
     fn process<R, W>(

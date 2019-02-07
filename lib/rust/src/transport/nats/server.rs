@@ -7,9 +7,9 @@ use crossbeam::channel;
 use nats;
 
 use super::{build_client, NATS_MAX_MESSAGE_SIZE};
-use buffer::FMemoryOutputBuffer;
-use processor::FProcessor;
-use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
+use crate::buffer::FMemoryOutputBuffer;
+use crate::processor::FProcessor;
+use crate::protocol::{FInputProtocolFactory, FOutputProtocolFactory};
 
 const DEFAULT_WORK_QUEUE_LEN: usize = 64;
 
@@ -252,9 +252,6 @@ where
     if output.bytes().is_empty() {
         return Ok(());
     }
-
-    println!("process_frame output: {:?}", output.bytes());
-    println!("reply: {}", &msg.reply);
 
     client
         .lock()

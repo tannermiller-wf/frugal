@@ -1,6 +1,7 @@
-use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
-use transport::FTransport;
+use crate::protocol::{FInputProtocolFactory, FOutputProtocolFactory};
+use crate::transport::FTransport;
 
+#[derive(Clone)]
 pub struct FServiceProvider<T>
 where
     T: FTransport,
