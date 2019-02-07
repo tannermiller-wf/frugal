@@ -26,6 +26,8 @@ use frugal::service::example;
 use frugal::service::Request;
 use frugal::transport::FTransport;
 
+use super::*;
+
 pub trait FBaseFoo {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()>;
 }

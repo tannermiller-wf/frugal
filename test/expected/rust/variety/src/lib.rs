@@ -4,9 +4,13 @@
 #![allow(deprecated)]
 #![allow(unused_imports)]
 
+extern crate actual_base_rust;
 extern crate frugal;
-extern crate rust;
+extern crate intermediate_include;
+extern crate subdir_include;
 extern crate thrift;
+extern crate valid_structs;
+extern crate valid_types;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
@@ -17,10 +21,10 @@ extern crate tower_web;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const REDEF_CONST: i32 = rust::CONST_I32_FROM_BASE;
+pub const REDEF_CONST: i32 = actual_base_rust::CONST_I32_FROM_BASE;
 
 lazy_static! {
-    pub static ref CONST_THING: rust::Thing = rust::Thing {
+    pub static ref CONST_THING: actual_base_rust::Thing = actual_base_rust::Thing {
         an_id: Some(1),
         a_string: Some("some string".into()),
     };
@@ -180,7 +184,7 @@ impl ItsAnEnum {
 
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub struct TestBase {
-    pub base_struct: Option<rust::Thing>,
+    pub base_struct: Option<actual_base_rust::Thing>,
 }
 
 impl TestBase {
@@ -209,7 +213,7 @@ impl TestBase {
         R: thrift::transport::TReadTransport,
         T: thrift::protocol::TInputProtocol<R>,
     {
-        let mut base_struct = rust::Thing::default();
+        let mut base_struct = actual_base_rust::Thing::default();
         base_struct.read(iprot)?;
         self.base_struct = Some(base_struct);
         Ok(())
@@ -440,7 +444,7 @@ pub struct TestingDefaults {
     pub list4: Option<Vec<Int>>,
     pub a_map: Option<BTreeMap<String, String>>,
     pub status: HealthCondition,
-    pub base_status: rust::BaseHealthCondition,
+    pub base_status: actual_base_rust::BaseHealthCondition,
 }
 
 impl Default for TestingDefaults {
@@ -474,7 +478,7 @@ impl Default for TestingDefaults {
                 m
             }),
             status: HealthCondition::Pass,
-            base_status: rust::BaseHealthCondition::Fail,
+            base_status: actual_base_rust::BaseHealthCondition::Fail,
         }
     }
 }
@@ -727,7 +731,7 @@ impl TestingDefaults {
     {
         let base_status = iprot
             .read_i32()
-            .and_then(rust::BaseHealthCondition::from_i32)?;
+            .and_then(actual_base_rust::BaseHealthCondition::from_i32)?;
         self.base_status = base_status;
         Ok(())
     }

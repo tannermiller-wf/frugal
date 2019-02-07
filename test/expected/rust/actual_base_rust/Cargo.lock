@@ -1,4 +1,17 @@
 [[package]]
+name = "actual_base_rust"
+version = "2.22.0"
+dependencies = [
+ "frugal 2.23.0",
+ "futures 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
+ "thrift 1.0.0",
+ "tower-service 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "tower-web 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -767,19 +780,6 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "ucd-util 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "rust"
-version = "2.22.0"
-dependencies = [
- "frugal 2.23.0",
- "futures 0.1.24 (registry+https://github.com/rust-lang/crates.io-index)",
- "lazy_static 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.4.5 (registry+https://github.com/rust-lang/crates.io-index)",
- "thrift 1.0.0",
- "tower-service 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "tower-web 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

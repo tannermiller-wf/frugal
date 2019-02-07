@@ -26,6 +26,9 @@ use frugal::service::example;
 use frugal::service::Request;
 use frugal::transport::FTransport;
 
+use super::*;
+use actual_base_rust;
+
 pub trait FIntermediateFoo {
     fn intermeidate_foo(&mut self, ctx: &FContext) -> thrift::Result<()>;
 }

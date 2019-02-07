@@ -4,8 +4,8 @@
 #![allow(deprecated)]
 #![allow(unused_imports)]
 
+extern crate actual_base_rust;
 extern crate frugal;
-extern crate rust;
 extern crate thrift;
 #[macro_use]
 extern crate lazy_static;
