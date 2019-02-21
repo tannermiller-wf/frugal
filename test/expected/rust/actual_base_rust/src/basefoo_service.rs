@@ -22,8 +22,6 @@ use frugal::protocol::{
     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
 };
 use frugal::provider::FServiceProvider;
-use frugal::service::example;
-use frugal::service::Request;
 use frugal::transport::FTransport;
 
 use super::*;
@@ -123,7 +121,7 @@ impl FBaseFooRequest {
     }
 }
 
-impl Request for FBaseFooRequest {
+impl frugal::service::Request for FBaseFooRequest {
     fn context(&mut self) -> &mut FContext {
         &mut self.ctx
     }
@@ -137,11 +135,11 @@ pub enum FBaseFooResponse {
     BasePing(FBaseFooBasePingResult),
 }
 
-pub struct FBaseFooClient<S>
+pub struct FBaseFooClient<S0>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    S0: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
-    service: S,
+    service: S0,
 }
 
 impl<T> FBaseFooClient<FBaseFooClientService<T>>
@@ -159,12 +157,12 @@ where
     }
 }
 
-impl<S> FBaseFoo for FBaseFooClient<S>
+impl<S0> FBaseFoo for FBaseFooClient<S0>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    S0: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        let args = FBaseFooBasePingArgs::default();
+        let args = FBaseFooBasePingArgs {};
         let request = FBaseFooRequest::new(ctx.clone(), FBaseFooMethod::BasePing(args));
         match self.service.call(request).wait()? {
             FBaseFooResponse::BasePing(result) => Ok(()),

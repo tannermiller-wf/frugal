@@ -37,7 +37,15 @@ func TestValidRustFrugalCompiler(t *testing.T) {
 	files := []FileComparisonPair{
 		{"expected/rust/actual_base_rust/src/lib.rs", filepath.Join(outputDir, "actual_base_rust", "src", "lib.rs")},
 		{"expected/rust/actual_base_rust/src/basefoo_service.rs", filepath.Join(outputDir, "actual_base_rust", "src", "basefoo_service.rs")},
+		{"expected/rust/intermediate_include/src/lib.rs", filepath.Join(outputDir, "intermediate_include", "src", "lib.rs")},
+		{"expected/rust/intermediate_include/src/intermediatefoo_service.rs", filepath.Join(outputDir, "intermediate_include", "src", "intermediatefoo_service.rs")},
+		{"expected/rust/valid_structs/src/lib.rs", filepath.Join(outputDir, "valid_structs", "src", "lib.rs")},
+		{"expected/rust/valid_types/src/lib.rs", filepath.Join(outputDir, "valid_types", "src", "lib.rs")},
+		{"expected/rust/subdir_include/src/lib.rs", filepath.Join(outputDir, "subdir_include", "src", "lib.rs")},
 		{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
+		{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
+		{"expected/rust/variety/src/foo_service.rs", filepath.Join(outputDir, "variety", "src", "foo_service.rs")},
+		{"expected/rust/variety/src/footransitivedeps_service.rs", filepath.Join(outputDir, "variety", "src", "footransitivedeps_service_service.rs")},
 	}
 	copyAllFiles(t, files)
 	compareAllFiles(t, files)

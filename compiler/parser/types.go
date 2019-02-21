@@ -301,6 +301,22 @@ func (s *Service) ExtendsService() string {
 	return s.Extends
 }
 
+// ExtendsServiceStruct returns the Service defintion of the extended service,
+// if applicable, or nil if not.
+func (s *Service) ExtendsServiceStruct() *Service {
+	if s.Extends != "" {
+		if s.ExtendsInclude() != "" {
+			svcName := s.ExtendsService()
+			for _, svc := range s.Frugal.ParsedIncludes[s.ExtendsInclude()].Services {
+				if svc.Name == svcName {
+					return svc
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // TwowayMethods returns a slice of the non-oneway methods defined in this
 // Service.
 func (s *Service) TwowayMethods() []*Method {

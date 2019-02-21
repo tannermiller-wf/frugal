@@ -115,13 +115,7 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 		return err
 	}
 
-	includedCrates := []string{}
-	for _, include := range g.Frugal.Includes {
-		namespace := g.Frugal.NamespaceForInclude(include.Name, lang)
-		if namespace != nil {
-			includedCrates = append(includedCrates, fmt.Sprintf("extern crate %s;", includeNameToReference(namespace.Value)))
-		}
-	}
+	includedCrates := g.iterateIncludes("extern crate %s;", 1)
 	_, err = g.rootFile.WriteString(fmt.Sprintf(
 		`#![allow(deprecated)]
 		 #![allow(unused_imports)]
@@ -137,7 +131,7 @@ func (g *Generator) SetupGenerator(outputDir string) error {
 		 extern crate tower_service;
 		 extern crate tower_web;
 		
-		use std::collections::{BTreeMap, BTreeSet};
+		 use std::collections::{BTreeMap, BTreeSet};
 
 		`,
 		strings.Join(includedCrates, "\n"),
@@ -195,6 +189,24 @@ func (g *Generator) PostProcess(f *os.File) error {
 	return err
 }
 
+func (g *Generator) iterateIncludes(format string, n int) []string {
+	includedCrates := []string{}
+	for _, include := range g.Frugal.Includes {
+		namespace := g.Frugal.NamespaceForInclude(include.Name, lang)
+		includeName := include.Name
+		if namespace != nil {
+			includeName = includeNameToReference(namespace.Value)
+		}
+		name := methodName(includeName)
+		inputs := make([]interface{}, n)
+		for i := 0; i < n; i++ {
+			inputs[i] = name
+		}
+		includedCrates = append(includedCrates, fmt.Sprintf(format, inputs...))
+	}
+	return includedCrates
+}
+
 func (g *Generator) GenerateDependencies(dir string) error {
 	if !g.packageType.generateCargoTOML() {
 		return nil
@@ -205,11 +217,22 @@ func (g *Generator) GenerateDependencies(dir string) error {
 		return err
 	}
 
+	includedCrates := g.iterateIncludes(`%s = { path = "../%s" }`, 2)
+
 	cargoFile.WriteString(fmt.Sprintf(`[package]
 name = %q
 version = %q
 
-[dependencies]`, g.crateName(), globals.Version))
+[dependencies]
+thrift = { path = "../../../lib/rust/thrift" }
+frugal = { path = "../../../lib/rust" }
+lazy_static = "1.2"
+log = "0.4"
+tower-service = "0.1"
+tower-web = "0.3"
+futures = "0.1"
+%s
+`, g.crateName(), globals.Version, strings.Join(includedCrates, "\n")))
 	return cargoFile.Close()
 }
 
@@ -249,7 +272,7 @@ func includeNameToReference(includeName string) string {
 	split := strings.FieldsFunc(includeName, func(r rune) bool {
 		return r == '.' || r == '/'
 	})
-	return split[len(split)-1]
+	return strings.Join(split, "_")
 }
 
 func (g *Generator) generateRustLiteral(t *parser.Type, value interface{}, optional bool) string {
@@ -1045,8 +1068,8 @@ func (g *Generator) GenerateTypesImports(file *os.File) error {
 }
 
 func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) error {
-	// TODO: Handle other imports?
-	_, err := file.WriteString(
+	includedCrates := g.iterateIncludes("use %s;", 1)
+	_, err := file.WriteString(fmt.Sprintf(
 		`#![allow(unused_variables)]
 
 		 use std::collections::BTreeMap;
@@ -1068,12 +1091,13 @@ func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) err
 		     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
 		 };
 		 use frugal::provider::FServiceProvider;
-		 use frugal::service::example;
-		 use frugal::service::Request;
 		 use frugal::transport::FTransport;
+
+		 use super::*;
+		 %s
 		
-		`,
-	)
+		`, strings.Join(includedCrates, "\n"),
+	))
 	return err
 }
 
@@ -1126,7 +1150,7 @@ func (g *Generator) generateMethodArguments(arguments []*parser.Field) []string 
 	args := make([]string, 0, len(arguments))
 	for _, f := range arguments {
 		t := g.toRustType(f.Type, f.Modifier != parser.Required)
-		args = append(args, fmt.Sprintf("%s: %s", f.Name, t))
+		args = append(args, fmt.Sprintf("%s: %s", methodName(f.Name), t))
 	}
 	return args
 }
@@ -1134,6 +1158,136 @@ func (g *Generator) generateMethodArguments(arguments []*parser.Field) []string 
 func (g *Generator) generateMethodSignature(method *parser.Method) string {
 	return fmt.Sprintf("fn %s(&mut self, ctx: &FContext, %s) -> thrift::Result<%s>\n",
 		methodName(method.Name), commaSpaceJoin(g.generateMethodArguments(method.Arguments)), g.toRustType(method.ReturnType, false))
+}
+
+func (g *Generator) implServiceForClient(implSvcName string, modName string, s *parser.Service, paramNames []string, svcBounds string) string {
+	sName := typeName(s.Name)
+	var buffer bytes.Buffer
+	pNames := strings.Join(paramNames, ",")
+	buffer.WriteString(fmt.Sprintf(`
+				impl<%s> %sF%s for F%sClient<%s>
+				where
+					%s
+				{
+				`, pNames, modName, sName, implSvcName, pNames, svcBounds))
+	for _, method := range s.Methods {
+		mName := typeName(method.Name)
+		args := make([]string, 0, len(method.Arguments))
+		for _, f := range method.Arguments {
+			args = append(args, methodName(f.Name))
+		}
+		buffer.WriteString(fmt.Sprintf("%s {\n", g.generateMethodSignature(method)))
+		if modName == "" {
+			buffer.WriteString(fmt.Sprintf(`let args = F%s%sArgs { %s };
+						let request = F%sRequest::new(ctx.clone(), F%sMethod::%s(args));
+						`,
+				sName, mName, commaSpaceJoin(args),
+				implSvcName, sName, mName))
+			buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait()? {
+							F%sResponse::%s(result) => `, sName, mName))
+			if method.ReturnType == nil {
+				buffer.WriteString("Ok(()),\n")
+			} else {
+				buffer.WriteString("{\n")
+				for _, exc := range method.Exceptions {
+					eName := methodName(exc.Name)
+					buffer.WriteString(fmt.Sprintf(`if let Some(%s) = result.%s {
+						return Err(thrift::Error::User(Box::new(%s)));
+					};
+					`, eName, eName, eName))
+				}
+				buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
+						return Ok(success);
+					};
+					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for \"%s\"")))
+				}`, mName))
+			}
+			if len(s.Methods) > 1 {
+				buffer.WriteString(fmt.Sprintf(`_ => panic!("F%sClient::%s() received an incorrect response"),
+					`, implSvcName, methodName(method.Name)))
+			}
+			// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
+			buffer.WriteString("}\n")
+		} else {
+			buffer.WriteString(fmt.Sprintf("self.%s_client.%s(ctx, %s)", methodName(s.Name), methodName(method.Name), strings.Join(g.generateMethodArguments(method.Arguments), ",")))
+		}
+		buffer.WriteString("}\n\n")
+	}
+	buffer.WriteString("}\n\n")
+	return buffer.String()
+}
+
+func (g *Generator) clientServiceTraits(s *parser.Service) ([]string, string) {
+	svcBounds := g.clientServiceTraitsInner(s, "")
+	paramNames := make([]string, 0, len(svcBounds))
+	whereClause := make([]string, 0, len(svcBounds))
+	for i, svcBound := range svcBounds {
+		next := fmt.Sprintf("S%v", i)
+		paramNames = append(paramNames, next)
+		whereClause = append(whereClause, fmt.Sprintf("%s: %s", next, svcBound))
+	}
+	return paramNames, strings.Join(whereClause, ",\n")
+}
+
+func (g *Generator) clientServiceTraitsInner(s *parser.Service, include string) []string {
+	sName := typeName(s.Name)
+	svcBound := fmt.Sprintf(
+		"Service<Request = %sF%sRequest, Response = %sF%sResponse, Error = thrift::Error>",
+		include, sName, include, sName)
+	if svc := s.ExtendsServiceStruct(); svc != nil {
+		svcInclude := s.ExtendsInclude()
+		if svcInclude != "" {
+			if namespace := g.Frugal.NamespaceForInclude(svcInclude, lang); namespace != nil {
+				svcInclude = includeNameToReference(namespace.Value)
+			}
+			svcInclude = fmt.Sprintf("%s::%s_service::", svcInclude, strings.ToLower(svc.Name))
+		}
+		return append(g.clientServiceTraitsInner(svc, svcInclude), svcBound)
+	}
+	return []string{svcBound}
+}
+
+func (g *Generator) processorUserErrorHandling(sName string, method *parser.Method) string {
+	return g.processorUserErrorHandlingInner(sName, "user_err", 0, method)
+}
+
+func (g *Generator) processorUserErrorHandlingInner(sName string, subject string, index int, method *parser.Method) string {
+	var buffer bytes.Buffer
+	mName := typeName(method.Name)
+	eName := methodName(method.Exceptions[index].Name)
+	tName := method.Exceptions[index].Type.Name
+	splitExtends := strings.Split(tName, ".")
+	if len(splitExtends) > 1 {
+		localModName := splitExtends[0]
+		if namespace := g.Frugal.NamespaceForInclude(splitExtends[0], lang); namespace != nil {
+			localModName = namespace.Value
+		}
+		tName = fmt.Sprintf("%s::%s", includeNameToReference(localModName), typeName(splitExtends[1]))
+	} else {
+		tName = typeName(tName)
+	}
+	buffer.WriteString(fmt.Sprintf(`%s
+			.downcast::<%s>()
+			.map(|%s| {
+				F%sResponse::%s(F%s%sResult {`,
+		subject, tName, eName, sName, mName, sName, mName))
+	if method.ReturnType != nil {
+		buffer.WriteString("success: None,\n")
+	}
+	buffer.WriteString(fmt.Sprintf("%s: Some(*%s),\n", eName, eName))
+	for i, exc := range method.Exceptions {
+		if i != index {
+			buffer.WriteString(fmt.Sprintf("%s: None,\n", methodName(exc.Name)))
+		}
+	}
+	buffer.WriteString("})\n})\n")
+	if len(method.Exceptions) > index+1 {
+		subj := fmt.Sprintf("not_%s", eName)
+		buffer.WriteString(fmt.Sprintf(`.or_else(|%s| {
+			%s
+		})`, subj, g.processorUserErrorHandlingInner(sName, subj, index+1, method)))
+	}
+	return buffer.String()
 }
 
 func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
@@ -1145,7 +1299,18 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	sName := typeName(s.Name)
 	extends := ""
 	if s.Extends != "" {
-		extends = fmt.Sprintf(": %s ", strings.Replace(s.Extends, ".", "::", -1))
+		svcName := s.Extends
+		modName := ""
+		splitExtends := strings.Split(s.Extends, ".")
+		if len(splitExtends) > 1 {
+			svcName = splitExtends[1]
+			localModName := splitExtends[0]
+			if namespace := g.Frugal.NamespaceForInclude(splitExtends[0], lang); namespace != nil {
+				localModName = namespace.Value
+			}
+			modName = fmt.Sprintf("%s::", includeNameToReference(localModName))
+		}
+		extends = fmt.Sprintf(": %s%s_service::F%s ", modName, strings.ToLower(svcName), typeName(svcName))
 	}
 	buffer.WriteString(fmt.Sprintf("pub trait F%s%s {\n", sName, extends))
 	for _, method := range s.Methods {
@@ -1189,7 +1354,7 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			}
 		}
 
-		impl Request for F%sRequest {
+		impl frugal::service::Request for F%sRequest {
 			fn context(&mut self) -> &mut FContext {
 				&mut self.ctx
 			}
@@ -1208,19 +1373,43 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	buffer.WriteString("}\n\n")
 
 	// write the service client
-	buffer.WriteString(fmt.Sprintf(`pub struct F%sClient<S>
+	paramNames, svcBounds := g.clientServiceTraits(s)
+	extendServiceField := ""
+	extendServiceFieldInst := ""
+	extendsClientService := ""
+	extendsModName := ""
+	if s.Extends != "" {
+		svcName := s.Extends
+		splitExtends := strings.Split(s.Extends, ".")
+		if len(splitExtends) > 1 {
+			svcName = splitExtends[1]
+			localModName := splitExtends[0]
+			if namespace := g.Frugal.NamespaceForInclude(splitExtends[0], lang); namespace != nil {
+				localModName = namespace.Value
+			}
+			extendsModName = fmt.Sprintf("%s::%s_service::", includeNameToReference(localModName), strings.ToLower(splitExtends[1]))
+		}
+		tName := typeName(svcName)
+		mName := methodName(svcName)
+		extendServiceField = fmt.Sprintf("%s_client: %sF%sClient<%s>,", mName, extendsModName, tName, "S0")
+		extendServiceFieldInst = fmt.Sprintf("%s_client: %sF%sClient::new(provider.clone()),", mName, extendsModName, tName)
+		extendsClientService = fmt.Sprintf("%sF%sClientService<T>, ", extendsModName, tName)
+	}
+	buffer.WriteString(fmt.Sprintf(`pub struct F%sClient<%s>
 				where
-					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
+					%s
 				{
-					service: S,
+					%s
+					service: S%v,
 				}
 
-				impl<T> F%sClient<F%sClientService<T>>
+				impl<T> F%sClient<%sF%sClientService<T>>
 				where
 					T: FTransport,
 				{
-					pub fn new(provider: FServiceProvider<T>) -> F%sClient<F%sClientService<T>> {
+					pub fn new(provider: FServiceProvider<T>) -> F%sClient<%sF%sClientService<T>> {
 						F%sClient {
+							%s
 							service: F%sClientService {
 								transport: provider.transport,
 								input_protocol_factory: provider.input_protocol_factory,
@@ -1229,49 +1418,14 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 						}
 					}
 				}
-
-				impl<S> F%s for F%sClient<S>
-				where
-					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
-				{
-				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName))
-	for _, method := range s.Methods {
-		constructorMethod := "new"
-		if len(method.Arguments) == 0 {
-			constructorMethod = "default"
-		}
-		mName := typeName(method.Name)
-		buffer.WriteString(fmt.Sprintf(`%s {
-						let args = F%s%sArgs::%s(%s);
-						let request = F%sRequest::new(ctx.clone(), F%sMethod::%s(args));
-						`, g.generateMethodSignature(method), sName, mName, constructorMethod, commaSpaceJoin(g.generateMethodArguments(method.Arguments)), sName, sName, mName))
-		buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait()? {
-							F%sResponse::%s(result) => `, sName, mName))
-		if method.ReturnType == nil {
-			buffer.WriteString("Ok(()),\n")
-		} else {
-			buffer.WriteString("{\n")
-			for _, exc := range method.Exceptions {
-				eName := methodName(exc.Name)
-				buffer.WriteString(fmt.Sprintf(`if let Some(%s) = result.%s {
-						return Err(thrift::Error::User(Box::new(%s)));
-					};
-					`, eName, eName, eName))
-			}
-			buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
-						return Ok(success);
-					};
-					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for \"%s\"")))
-				}`, mName))
-		}
-		if len(s.Methods) > 1 {
-			buffer.WriteString(fmt.Sprintf(`_ => panic!("F%sClient::%s() received an incorrect response"),
-					`, sName, methodName(method.Name)))
-		}
-		// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
-		buffer.WriteString("}\n}\n\n")
+				`,
+		sName, strings.Join(paramNames, ","), svcBounds, extendServiceField, len(paramNames)-1,
+		sName, extendsClientService, sName, sName, extendsClientService, sName, sName, extendServiceFieldInst, sName))
+	if svc := s.ExtendsServiceStruct(); svc != nil {
+		buffer.WriteString(g.implServiceForClient(sName, extendsModName, svc, paramNames, svcBounds))
 	}
-	buffer.WriteString(fmt.Sprintf(`}
+	buffer.WriteString(g.implServiceForClient(sName, "", s, paramNames, svcBounds))
+	buffer.WriteString(fmt.Sprintf(`
 
 			pub struct F%sClientService<T>
 			where
@@ -1481,21 +1635,41 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 		sName, sName, sName))
 	for _, method := range s.Methods {
 		mName := typeName(method.Name)
-		args := ""
-		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => self
+		argSlice := make([]string, 0, len(method.Arguments))
+		for _, arg := range method.Arguments {
+			argSlice = append(argSlice, fmt.Sprintf("args.%s", methodName(arg.Name)))
+		}
+		args := commaSpaceJoin(argSlice)
+		buffer.WriteString(fmt.Sprintf("F%sMethod::%s(args) => ", sName, mName))
+		if len(method.Exceptions) == 0 {
+			buffer.WriteString(fmt.Sprintf(`self
 			.0
 			.%s(&req.ctx,%s)
 			.map(|res| F%sResponse::%s(F%s%sResult {`,
-			sName, mName, methodName(method.Name), args, sName, mName, sName, mName))
-		if method.ReturnType != nil {
-			buffer.WriteString("success: Some(res),\n")
+				methodName(method.Name), args, sName, mName, sName, mName))
+			if method.ReturnType != nil {
+				buffer.WriteString("success: Some(res),\n")
+			}
+			buffer.WriteString("})),\n")
+		} else {
+			buffer.WriteString(fmt.Sprintf(`match self.0.%s(&req.ctx,%s) {
+				Ok(res) => Ok(F%sResponse::%s(F%s%sResult {`, methodName(method.Name), args, sName, mName, sName, mName))
+			if method.ReturnType != nil {
+				buffer.WriteString("success: Some(res),\n")
+			}
+			for _, exc := range method.Exceptions {
+				buffer.WriteString(fmt.Sprintf("%s: None,\n", methodName(exc.Name)))
+			}
+			buffer.WriteString(fmt.Sprintf(`})),
+				Err(err) => match err {
+					thrift::Error::User(user_err) =>
+						%s
+						.map_err(|err| thrift::Error::User(err)),
+				_ => Err(err)
+			},
+		},
+		`, g.processorUserErrorHandling(sName, method)))
 		}
-		for _, _ = range method.Exceptions {
-			// TODO: How are we getting exceptions out? Are they part of the Result?
-			//buffer.WriteString(fmt.Sprintf("%s,\n", methodName(exc.Name)))
-		}
-		buffer.WriteString(fmt.Sprintf(`})),
-		`))
 	}
 	buffer.WriteString(fmt.Sprintf(`};
 			future::result(result)
@@ -1699,10 +1873,11 @@ func (g *Generator) canonicalizeTypeName(t *parser.Type) string {
 		tName = strings.Split(tName, ".")[1]
 		tName = typeName(tName)
 		if t.IncludeName() != "" {
-			namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang)
-			if namespace != nil {
-				tName = fmt.Sprintf("%s::%s", includeNameToReference(namespace.Value), tName)
+			includeName := t.IncludeName()
+			if namespace := g.Frugal.NamespaceForInclude(t.IncludeName(), lang); namespace != nil {
+				includeName = namespace.Value
 			}
+			tName = fmt.Sprintf("%s::%s", methodName(includeNameToReference(includeName)), tName)
 		}
 	} else {
 		tName = typeName(tName)

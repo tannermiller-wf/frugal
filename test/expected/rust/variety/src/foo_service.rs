@@ -1991,17 +1991,17 @@ pub enum FFooResponse {
     SayAgain(FFooSayAgainResult),
 }
 
-pub struct FFooClient<S1, S2>
+pub struct FFooClient<S0, S1>
 where
-    S1: Service<
+    S0: Service<
         Request = actual_base_rust::basefoo_service::FBaseFooRequest,
         Response = actual_base_rust::basefoo_service::FBaseFooResponse,
         Error = thrift::Error,
     >,
-    S2: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
 {
-    base_foo_client: actual_base_rust::basefoo_service::FBaseFooClient<S1>,
-    service: S2,
+    base_foo_client: actual_base_rust::basefoo_service::FBaseFooClient<S0>,
+    service: S1,
 }
 
 impl<T>
@@ -2026,31 +2026,31 @@ where
     }
 }
 
-impl<S1, S2> actual_base_rust::basefoo_service::FBaseFoo for FFooClient<S1, S2>
+impl<S0, S1> actual_base_rust::basefoo_service::FBaseFoo for FFooClient<S0, S1>
 where
-    S1: Service<
+    S0: Service<
         Request = actual_base_rust::basefoo_service::FBaseFooRequest,
         Response = actual_base_rust::basefoo_service::FBaseFooResponse,
         Error = thrift::Error,
     >,
-    S2: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
 {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
         self.base_foo_client.base_ping(ctx)
     }
 }
 
-impl<S1, S2> FFoo for FFooClient<S1, S2>
+impl<S0, S1> FFoo for FFooClient<S0, S1>
 where
-    S1: Service<
+    S0: Service<
         Request = actual_base_rust::basefoo_service::FBaseFooRequest,
         Response = actual_base_rust::basefoo_service::FBaseFooResponse,
         Error = thrift::Error,
     >,
-    S2: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
 {
     fn ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        let args = FFooPingArgs::default();
+        let args = FFooPingArgs {};
         let request = FFooRequest::new(ctx.clone(), FFooMethod::Ping(args));
         match self.service.call(request).wait()? {
             FFooResponse::Ping(result) => Ok(()),
@@ -2179,7 +2179,7 @@ where
     }
 
     fn get_thing(&mut self, ctx: &FContext) -> thrift::Result<valid_structs::Thing> {
-        let args = FFooGetThingArgs::default();
+        let args = FFooGetThingArgs {};
         let request = FFooRequest::new(ctx.clone(), FFooMethod::GetThing(args));
         match self.service.call(request).wait()? {
             FFooResponse::GetThing(result) => {
@@ -2196,7 +2196,7 @@ where
     }
 
     fn get_my_int(&mut self, ctx: &FContext) -> thrift::Result<valid_types::MyInt> {
-        let args = FFooGetMyIntArgs::default();
+        let args = FFooGetMyIntArgs {};
         let request = FFooRequest::new(ctx.clone(), FFooMethod::GetMyInt(args));
         match self.service.call(request).wait()? {
             FFooResponse::GetMyInt(result) => {
@@ -2712,8 +2712,8 @@ where
                                 .map(|api| {
                                     FFooResponse::Blah(FFooBlahResult {
                                         success: None,
-                                        awe: None,
                                         api: Some(*api),
+                                        awe: None,
                                     })
                                 })
                         })

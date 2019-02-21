@@ -22,8 +22,6 @@ use frugal::protocol::{
     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
 };
 use frugal::provider::FServiceProvider;
-use frugal::service::example;
-use frugal::service::Request;
 use frugal::transport::FTransport;
 
 use super::*;
@@ -128,7 +126,7 @@ impl FIntermediateFooRequest {
     }
 }
 
-impl Request for FIntermediateFooRequest {
+impl frugal::service::Request for FIntermediateFooRequest {
     fn context(&mut self) -> &mut FContext {
         &mut self.ctx
     }
@@ -142,15 +140,15 @@ pub enum FIntermediateFooResponse {
     IntermeidateFoo(FIntermediateFooIntermeidateFooResult),
 }
 
-pub struct FIntermediateFooClient<S>
+pub struct FIntermediateFooClient<S0>
 where
-    S: Service<
+    S0: Service<
         Request = FIntermediateFooRequest,
         Response = FIntermediateFooResponse,
         Error = thrift::Error,
     >,
 {
-    service: S,
+    service: S0,
 }
 
 impl<T> FIntermediateFooClient<FIntermediateFooClientService<T>>
@@ -170,16 +168,16 @@ where
     }
 }
 
-impl<S> FIntermediateFoo for FIntermediateFooClient<S>
+impl<S0> FIntermediateFoo for FIntermediateFooClient<S0>
 where
-    S: Service<
+    S0: Service<
         Request = FIntermediateFooRequest,
         Response = FIntermediateFooResponse,
         Error = thrift::Error,
     >,
 {
     fn intermeidate_foo(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        let args = FIntermediateFooIntermeidateFooArgs::default();
+        let args = FIntermediateFooIntermeidateFooArgs {};
         let request = FIntermediateFooRequest::new(
             ctx.clone(),
             FIntermediateFooMethod::IntermeidateFoo(args),
