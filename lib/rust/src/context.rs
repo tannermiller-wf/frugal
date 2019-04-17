@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -26,7 +26,7 @@ fn duration_to_ms_string(d: &Duration) -> String {
 }
 
 // used to track the op ids
-static NEXT_OP_ID: AtomicUsize = ATOMIC_USIZE_INIT;
+static NEXT_OP_ID: AtomicUsize = AtomicUsize::new(0);
 
 fn get_next_op_id() -> String {
     format!("{}", NEXT_OP_ID.fetch_add(1, Ordering::SeqCst))
@@ -76,7 +76,9 @@ impl FContext {
     }
 
     pub fn request_header(&self, name: &str) -> Option<&str> {
-        self.request_headers.get(name).map(|s| s.as_ref())
+        self.request_headers
+            .get(name)
+            .map(std::convert::AsRef::as_ref)
     }
 
     pub fn request_headers(&self) -> &BTreeMap<String, String> {
@@ -93,7 +95,9 @@ impl FContext {
     }
 
     pub fn response_header(&self, name: &str) -> Option<&str> {
-        self.response_headers.get(name).map(|s| s.as_ref())
+        self.response_headers
+            .get(name)
+            .map(std::convert::AsRef::as_ref)
     }
 
     pub fn response_headers(&self) -> &BTreeMap<String, String> {

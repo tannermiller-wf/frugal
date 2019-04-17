@@ -20,6 +20,6 @@ pub fn read_size<R: io::Read>(reader: &mut R) -> thrift::Result<usize> {
     let mut buf_reader = io::Cursor::new(buf);
     buf_reader
         .read_u32::<BigEndian>()
-        .map_err(|err| err.into())
+        .map_err(std::convert::Into::into)
         .map(|size| size as usize)
 }
