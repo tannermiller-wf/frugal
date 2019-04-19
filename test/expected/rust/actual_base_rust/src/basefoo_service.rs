@@ -428,7 +428,7 @@ where
         R: thrift::transport::TReadTransport,
         W: thrift::transport::TWriteTransport,
     {
-        let mut args = FBaseFooBasePingArgs {};
+        let mut args = FBaseFooBasePingArgs::default();
         let mut iproxy = iprot.t_protocol_proxy();
         args.read(&mut iproxy)?;
         iproxy.read_message_end()?;
@@ -455,44 +455,35 @@ where
                 );
                 Ok(())
             }
-            Ok(response) => {
-                let write_result = oprot
-                    .write_response_header(&ctx)
-                    .and_then(|()| {
-                        oprot.t_protocol_proxy().write_message_begin(
-                            &thrift::protocol::TMessageIdentifier::new(
-                                "basePing",
-                                thrift::protocol::TMessageType::Reply,
-                                0,
+            Ok(FBaseFooResponse::BasePing(result)) => oprot
+                .write_response_header(&ctx)
+                .and_then(|()| {
+                    oprot.t_protocol_proxy().write_message_begin(
+                        &thrift::protocol::TMessageIdentifier::new(
+                            "basePing",
+                            thrift::protocol::TMessageType::Reply,
+                            0,
+                        ),
+                    )
+                })
+                .and_then(|()| result.write(&mut oprot.t_protocol_proxy()))
+                .and_then(|()| oprot.t_protocol_proxy().write_message_end())
+                .and_then(|()| oprot.t_protocol_proxy().flush())
+                .or_else(|err| {
+                    if errors::is_too_large_error(&err) {
+                        errors::write_application_error(
+                            "basePing",
+                            &ctx,
+                            &thrift::ApplicationError::new(
+                                thrift::ApplicationErrorKind::Unknown,
+                                errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
                             ),
+                            oprot,
                         )
-                    })
-                    .and_then(|()| {
-                        let result = FBaseFooBasePingResult {};
-                        result.write(&mut oprot.t_protocol_proxy())
-                    })
-                    .and_then(|()| oprot.t_protocol_proxy().write_message_end())
-                    .and_then(|()| oprot.t_protocol_proxy().flush());
-
-                match write_result {
-                    Err(err) => {
-                        if errors::is_too_large_error(&err) {
-                            errors::write_application_error(
-                                "basePing",
-                                &ctx,
-                                &thrift::ApplicationError::new(
-                                    thrift::ApplicationErrorKind::Unknown,
-                                    errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
-                                ),
-                                oprot,
-                            )
-                        } else {
-                            Err(err)
-                        }
+                    } else {
+                        Err(err)
                     }
-                    Ok(_) => Ok(()),
-                }
-            }
+                }),
         }
     }
 }
