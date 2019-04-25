@@ -1934,6 +1934,7 @@ pub enum FFooMethod {
     SayHelloWith(FFooSayHelloWithArgs),
     WhatDoYouSay(FFooWhatDoYouSayArgs),
     SayAgain(FFooSayAgainArgs),
+    BaseFooBasePing(actual_base_rust::basefoo_service::FBaseFooBasePingArgs),
 }
 
 impl FFooMethod {
@@ -1951,6 +1952,7 @@ impl FFooMethod {
             FFooMethod::SayHelloWith(_) => "sayHelloWith",
             FFooMethod::WhatDoYouSay(_) => "whatDoYouSay",
             FFooMethod::SayAgain(_) => "sayAgain",
+            FFooMethod::BaseFooBasePing(_) => "basePing",
         }
     }
 }
@@ -1989,6 +1991,7 @@ pub enum FFooResponse {
     SayHelloWith(FFooSayHelloWithResult),
     WhatDoYouSay(FFooWhatDoYouSayResult),
     SayAgain(FFooSayAgainResult),
+    BaseFooBasePing(actual_base_rust::basefoo_service::FBaseFooBasePingResult),
 }
 
 pub struct FFooClient<S0, S1>
@@ -2324,6 +2327,7 @@ where
             SayHelloWith,
             WhatDoYouSay,
             SayAgain,
+            BaseFooBasePing,
         };
         let FFooRequest { mut ctx, method } = req;
         let method_name = method.name();
@@ -2476,6 +2480,16 @@ where
                     args.write(&mut oproxy)?;
                     ResultSignifier::SayAgain
                 }
+                FFooMethod::BaseFooBasePing(args) => {
+                    oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+                        "basePing",
+                        thrift::protocol::TMessageType::Call,
+                        0,
+                    ))?;
+                    let args = actual_base_rust::basefoo_service::FBaseFooBasePingArgs {};
+                    args.write(&mut oproxy)?;
+                    ResultSignifier::BaseFooBasePing
+                }
             };
             oproxy.write_message_end()?;
             oproxy.flush()?;
@@ -2582,6 +2596,13 @@ where
                         result.read(&mut iproxy)?;
                         iproxy.read_message_end()?;
                         Ok(FFooResponse::SayAgain(result))
+                    }
+                    ResultSignifier::BaseFooBasePing => {
+                        let mut result =
+                            actual_base_rust::basefoo_service::FBaseFooBasePingResult::default();
+                        result.read(&mut iproxy)?;
+                        iproxy.read_message_end()?;
+                        Ok(FFooResponse::BaseFooBasePing(result))
                     }
                 },
                 _ => Err(thrift::new_application_error(
@@ -2786,6 +2807,11 @@ where
                 .0
                 .say_again(&req.ctx, args.message_result)
                 .map(|res| FFooResponse::SayAgain(FFooSayAgainResult { success: Some(res) })),
+            FFooMethod::BaseFooBasePing(args) => self.0.base_ping(&req.ctx).map(|res| {
+                FFooResponse::BaseFooBasePing(
+                    actual_base_rust::basefoo_service::FBaseFooBasePingResult {},
+                )
+            }),
         };
         future::result(result)
     }
@@ -2826,6 +2852,7 @@ where
             "sayHelloWith" => self.say_hello_with(&ctx, iprot, oprot),
             "whatDoYouSay" => self.what_do_you_say(&ctx, iprot, oprot),
             "sayAgain" => self.say_again(&ctx, iprot, oprot),
+            "basePing" => self.basefoo_base_ping(&ctx, iprot, oprot),
             _ => {
                 error!(
                     "frugal: client invoked unknown function {} on request with correlation id {}",
@@ -3684,6 +3711,76 @@ where
                     if errors::is_too_large_error(&err) {
                         errors::write_application_error(
                             "sayAgain",
+                            &ctx,
+                            &thrift::ApplicationError::new(
+                                thrift::ApplicationErrorKind::Unknown,
+                                errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
+                            ),
+                            oprot,
+                        )
+                    } else {
+                        Err(err)
+                    }
+                }),
+            Ok(_) => unreachable!(),
+        }
+    }
+
+    fn basefoo_base_ping<R, W>(
+        &mut self,
+        ctx: &FContext,
+        iprot: &mut FInputProtocol<R>,
+        oprot: &mut FOutputProtocol<W>,
+    ) -> thrift::Result<()>
+    where
+        R: thrift::transport::TReadTransport,
+        W: thrift::transport::TWriteTransport,
+    {
+        let mut args = actual_base_rust::basefoo_service::FBaseFooBasePingArgs::default();
+        let mut iproxy = iprot.t_protocol_proxy();
+        args.read(&mut iproxy)?;
+        iproxy.read_message_end()?;
+        let req = FFooRequest {
+            ctx: ctx.clone(),
+            method: FFooMethod::BaseFooBasePing(args),
+        };
+        match self.service.call(req).wait() {
+            Err(thrift::Error::User(err)) => {
+                error!(
+                    "{} {}: {}",
+                    errors::USER_ERROR_DESCRIPTION,
+                    ctx.correlation_id(),
+                    err.description()
+                );
+                Ok(())
+            }
+            Err(err) => {
+                error!(
+                    "{} {}: {}",
+                    errors::USER_ERROR_DESCRIPTION,
+                    ctx.correlation_id(),
+                    err.description()
+                );
+                Ok(())
+            }
+            Ok(FFooResponse::BaseFooBasePing(result)) => oprot
+                .write_response_header(&ctx)
+                .and_then(|()| {
+                    oprot.t_protocol_proxy().write_message_begin(
+                        &thrift::protocol::TMessageIdentifier::new(
+                            "basePing",
+                            thrift::protocol::TMessageType::Reply,
+                            0,
+                        ),
+                    )
+                })
+                .and_then(|()| result.write(&mut oprot.t_protocol_proxy()))
+                .and_then(|()| oprot.t_protocol_proxy().write_message_end())
+                .and_then(|()| oprot.t_protocol_proxy().flush())
+                .or_else(|err| {
+                    if errors::is_too_large_error(&err) {
+                        errors::write_application_error(
+                            "basePing",
                             &ctx,
                             &thrift::ApplicationError::new(
                                 thrift::ApplicationErrorKind::Unknown,
