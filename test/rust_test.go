@@ -45,7 +45,7 @@ func TestValidRustFrugalCompiler(t *testing.T) {
 		{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
 		{"expected/rust/variety/src/lib.rs", filepath.Join(outputDir, "variety", "src", "lib.rs")},
 		{"expected/rust/variety/src/foo_service.rs", filepath.Join(outputDir, "variety", "src", "foo_service.rs")},
-		{"expected/rust/variety/src/footransitivedeps_service.rs", filepath.Join(outputDir, "variety", "src", "footransitivedeps_service_service.rs")},
+		{"expected/rust/variety/src/footransitivedeps_service.rs", filepath.Join(outputDir, "variety", "src", "footransitivedeps_service.rs")},
 	}
 	copyAllFiles(t, files)
 	compareAllFiles(t, files)
