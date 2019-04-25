@@ -43,8 +43,6 @@ async def main():
     nats_client = NatsClient()
     await nats_client.connect(**get_nats_options())
 
-    transport = None
-
     if args.transport_type == NATS_NAME:
         transport = FNatsTransport(nats_client, "frugal.foo.bar.rpc.{}".format(args.port))
         await transport.open()

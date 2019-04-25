@@ -12,6 +12,7 @@ from frugal_test.f_FrugalTest import Numberz
 PREAMBLE_HEADER = "preamble"
 RAMBLE_HEADER = "ramble"
 
+ACTIVEMQ_NAME = 'activemq'
 NATS_NAME = 'nats'
 HTTP_NAME = 'http'
 

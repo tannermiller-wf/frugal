@@ -53,6 +53,10 @@ lib/go/glide.lock
 examples/go/vendor
 examples/go/glide.lock
 
+# GopherJS lib specific
+lib/gopherjs/vendor
+lib/gopherjs/glide.lock
+
 # Integration tests
 artifacts/
 test/integration/log/*

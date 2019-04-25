@@ -9,7 +9,7 @@ if [ -z "${IN_SKYNET_CLI+yes}" ]; then
 else
     cd ${FRUGAL_HOME}/lib/java
     mvn clean verify -q
-    mv target/frugal-2.20.0.jar ${FRUGAL_HOME}/test/integration/java/frugal-integration-test/frugal.jar
+    mv target/frugal-LOCAL.jar ${FRUGAL_HOME}/test/integration/java/frugal-integration-test/frugal.jar
 fi
 
 cd ${FRUGAL_HOME}/test/integration/java/frugal-integration-test
@@ -17,6 +17,5 @@ mvn clean install:install-file -Dfile=frugal.jar -U -q
 
 # Compile java tests
 mvn clean compile assembly:single -U -q
-
 
 mv ${FRUGAL_HOME}/test/integration/java/frugal-integration-test/target/frugal-integration-test-1.0-SNAPSHOT-jar-with-dependencies.jar ${FRUGAL_HOME}/test/integration/java/frugal-integration-test/cross.jar

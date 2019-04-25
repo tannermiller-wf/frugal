@@ -54,7 +54,7 @@ class FPublisherTransport(object):
 
     def _check_publish_size(self, data):
         """
-        Returns True if the data is of permissible size, False otherwise.
+        Returns True if the length of data is over the max message size.
         """
         return len(data) > self._max_message_size > 0
 

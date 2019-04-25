@@ -110,13 +110,11 @@ func copyFilePair(pair FileComparisonPair) error {
 	}
 	defer generatedFile.Close()
 
-	expectedFile, err := os.OpenFile(pair.ExpectedPath, os.O_RDWR, os.ModePerm)
+	expectedFile, err := os.Create(pair.ExpectedPath)
 	if err != nil {
 		return err
 	}
 	defer expectedFile.Close()
-	// In case lines were removed
-	expectedFile.Truncate(0)
 
 	_, err = io.Copy(expectedFile, generatedFile)
 	return err

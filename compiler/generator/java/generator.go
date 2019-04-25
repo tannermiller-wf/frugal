@@ -30,9 +30,10 @@ import (
 const (
 	lang                        = "java"
 	defaultOutputDir            = "gen-java"
-	tab                         = "\t"
 	generatedAnnotations        = "generated_annotations"
 	useVendorOption             = "use_vendor"
+	suppressDeprecatedLogging   = "suppress_deprecated_logging"
+	tab                         = "\t"
 	tabtab                      = tab + tab
 	tabtabtab                   = tab + tab + tab
 	tabtabtabtab                = tab + tab + tab + tab
@@ -89,6 +90,12 @@ func (g *Generator) getIsSetType(s *parser.Struct) (IsSetType, string) {
 	default:
 		return IsSetBitSet, ""
 	}
+}
+
+// Suppress deprecated API usage warning logging
+func (g *Generator) suppressDeprecatedLogging() bool {
+	_, ok := g.Options[suppressDeprecatedLogging]
+	return ok
 }
 
 func (g *Generator) SetupGenerator(outputDir string) error {
@@ -2270,7 +2277,9 @@ func (g *Generator) generateStructImports() string {
 	imports += "import java.util.BitSet;\n"
 	imports += "import java.nio.ByteBuffer;\n"
 	imports += "import java.util.Arrays;\n"
-	imports += "import javax.annotation.Generated;\n"
+	if g.includeGeneratedAnnotation() {
+		imports += "import javax.annotation.Generated;\n"
+	}
 	imports += "import org.slf4j.Logger;\n"
 	imports += "import org.slf4j.LoggerFactory;\n"
 
@@ -2302,8 +2311,9 @@ func (g *Generator) GenerateServiceImports(file *os.File, s *parser.Service) err
 	imports += "import org.apache.thrift.protocol.TMessageType;\n"
 	imports += "import org.apache.thrift.transport.TTransport;\n"
 	imports += "import org.apache.thrift.transport.TTransportException;\n"
-
-	imports += "import javax.annotation.Generated;\n"
+	if g.includeGeneratedAnnotation() {
+		imports += "import javax.annotation.Generated;\n"
+	}
 	imports += "import java.util.Arrays;\n"
 	imports += "import java.util.concurrent.*;\n"
 
@@ -2342,7 +2352,9 @@ func (g *Generator) GenerateScopeImports(file *os.File, s *parser.Scope) error {
 	imports += "import java.util.Arrays;\n"
 	imports += "import org.slf4j.Logger;\n"
 	imports += "import org.slf4j.LoggerFactory;\n"
-	imports += "import javax.annotation.Generated;\n"
+	if g.includeGeneratedAnnotation() {
+		imports += "import javax.annotation.Generated;\n"
+	}
 
 	_, err := file.WriteString(imports)
 	return err
@@ -2829,7 +2841,7 @@ func (g *Generator) generateClient(service *parser.Service, indent string) strin
 		contents += indent + tab + fmt.Sprintf("public %s %s(FContext ctx%s) %s {\n",
 			g.generateReturnValue(method), method.Name, g.generateArgs(method.Arguments, false), g.generateExceptions(method.Exceptions))
 
-		if deprecated {
+		if deprecated && !g.suppressDeprecatedLogging() {
 			contents += indent + tabtab + fmt.Sprintf("logger.warn(\"Call to deprecated function '%s.%s'\");\n", service.Name, method.Name)
 		}
 
@@ -3046,7 +3058,7 @@ func (g *Generator) generateServer(service *parser.Service, indent string) strin
 
 		contents += indent + tabtab + "public void process(FContext ctx, FProtocol iprot, FProtocol oprot) throws TException {\n"
 
-		if _, ok := method.Annotations.Deprecated(); ok {
+		if _, ok := method.Annotations.Deprecated(); ok && !g.suppressDeprecatedLogging() {
 			contents += indent + tabtabtab + fmt.Sprintf("logger.warn(\"Deprecated function '%s.%s' was called by a client\");\n", service.Name, method.Name)
 		}
 
@@ -3109,11 +3121,10 @@ func (g *Generator) generateServer(service *parser.Service, indent string) strin
 		contents += indent + tabtabtabtab + "} catch (TTransportException e) {\n"
 		contents += indent + tabtabtabtabtab + "if (e.getType() == TTransportExceptionType.REQUEST_TOO_LARGE) {\n"
 		contents += indent + tabtabtabtabtabtab + fmt.Sprintf(
-			"writeApplicationException(ctx, oprot, TApplicationExceptionType.RESPONSE_TOO_LARGE, \"%s\", \"response too large: \" + e.getMessage());\n",
+			"throw (TApplicationException) writeApplicationException(ctx, oprot, TApplicationExceptionType.RESPONSE_TOO_LARGE, \"%s\", \"response too large: \" + e.getMessage()).initCause(e);\n",
 			methodLower)
-		contents += indent + tabtabtabtabtab + "} else {\n"
-		contents += indent + tabtabtabtabtabtab + "throw e;\n"
 		contents += indent + tabtabtabtabtab + "}\n"
+		contents += indent + tabtabtabtabtab + "throw e;\n"
 		contents += indent + tabtabtabtab + "}\n"
 		contents += indent + tabtabtab + "}\n"
 		contents += indent + tabtab + "}\n"
@@ -3332,7 +3343,7 @@ func toConstantName(name string) string {
 }
 
 func (g *Generator) includeGeneratedAnnotation() bool {
-	return g.Options[generatedAnnotations] != "suppress"
+	return g.Options[generatedAnnotations] != "" && g.Options[generatedAnnotations] != "suppress"
 }
 
 func (g *Generator) generatedAnnotation(indent string) string {

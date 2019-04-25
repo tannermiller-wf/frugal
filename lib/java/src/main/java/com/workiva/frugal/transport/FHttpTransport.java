@@ -19,6 +19,7 @@ import com.workiva.frugal.exception.TTransportExceptionType;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.HttpEntity;
 import org.apache.http.HttpStatus;
+import org.apache.http.NoHttpResponseException;
 import org.apache.http.client.config.RequestConfig;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpPost;
@@ -262,6 +263,9 @@ public class FHttpTransport extends FTransport {
         } catch (SocketTimeoutException e) {
             throw new TTransportException(TTransportExceptionType.TIMED_OUT,
                     "http request socket timed out: " + e.getMessage(), e);
+        } catch (NoHttpResponseException e) {
+            throw new TTransportException(TTransportException.END_OF_FILE,
+                    "http request server closed: " + e.getMessage(), e);
         } catch (IOException e) {
             throw new TTransportException("http request failed: " + e.getMessage(), e);
         }

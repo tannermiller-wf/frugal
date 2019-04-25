@@ -66,7 +66,6 @@ func TestReadRequestHeader(t *testing.T) {
 	transport := &thrift.TMemoryBuffer{Buffer: bytes.NewBuffer(frugalFrame)}
 	proto := &FProtocol{tProtocolFactory.GetProtocol(transport)}
 
-
 	ctx, err := proto.ReadRequestHeader()
 	assert.Nil(err)
 	assert.Equal(frugalHeaders[cidHeader], ctx.CorrelationID())

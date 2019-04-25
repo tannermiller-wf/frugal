@@ -54,6 +54,7 @@ List<FTest> createTests(FFrugalTestClient client) {
   tests.add(new FTest(1, 'testBool', () async {
     ctx = new FContext(correlationId: 'testBool');
     var input = true;
+    // ignore: deprecated_member_use
     var result = await client.testBool(ctx, input);
     if (result != input) throw new FTestError(result, input);
   }));
@@ -199,7 +200,7 @@ List<FTest> createTests(FFrugalTestClient client) {
     ctx = new FContext(correlationId: 'testException');
     try {
       await client.testException(ctx, 'Xception');
-    } on Xception catch (exception) {
+    } on Xception catch (_) {
       return;
     }
 
@@ -210,7 +211,7 @@ List<FTest> createTests(FFrugalTestClient client) {
     ctx = new FContext(correlationId: 'testMultiException');
     try {
       await client.testMultiException(ctx, 'Xception2', 'foo');
-    } on Xception2 catch (exception2) {
+    } on Xception2 catch (_) {
       return;
     }
 

@@ -21,10 +21,11 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:args/args.dart';
 import 'package:thrift/thrift.dart';
-import 'package:frugal_test/frugal_test.dart';
 import 'package:frugal/frugal.dart';
 import 'package:frugal_test_client/test_cases.dart';
+import 'package:frugal_test/frugal_test.dart';
 import 'package:w_transport/w_transport.dart' as wt;
+// ignore: deprecated_member_use
 import 'package:w_transport/w_transport_vm.dart' show configureWTransportForVM;
 
 List<FTest> _tests;
@@ -128,7 +129,7 @@ TProtocolFactory getProtocolFactory(String protocolType) {
 
 Middleware clientMiddleware() {
   return (InvocationHandler next) {
-    return (String serviceName, String methodName, List<Object> args) {
+    return (String serviceName, String methodName, List args) {
       if (args.length > 1 && args[1].runtimeType == Uint8List){
           stdout.write(methodName + "(" + args[1].length.toString() + ")"
               " = ");
@@ -158,7 +159,7 @@ Future _initTestClient(
   var uri = Uri.parse('http://$host:$port');
 // Set request and response size limit to 1mb
   var maxSize = 1048576;
-  transport = new FHttpTransport(new wt.Client(), uri, requestSizeLimit: maxSize, responseSizeLimit: maxSize);
+  transport = new FHttpTransport(new wt.HttpClient(), uri, requestSizeLimit: maxSize, responseSizeLimit: maxSize);
   await transport.open();
 
   fProtocolFactory = new FProtocolFactory(getProtocolFactory(protocolType));

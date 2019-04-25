@@ -31,6 +31,7 @@ type TornadoGenerator struct {
 func (t *TornadoGenerator) GenerateServiceImports(file *os.File, s *parser.Service) error {
 	imports := "from datetime import timedelta\n"
 	imports += "from threading import Lock\n\n"
+	imports += "import sys\n"
 
 	imports += "from frugal.exceptions import TApplicationExceptionType\n"
 	imports += "from frugal.exceptions import TTransportExceptionType\n"
@@ -201,10 +202,12 @@ func (t *TornadoGenerator) generateProcessorFunction(method *parser.Method) stri
 	contents += tabtabtabtab + "return\n"
 	contents += tabtab + "except Exception as e:\n"
 	if !method.Oneway {
+		contents += tabtabtab + "# We need to store off the current exception information as `self._lock.acquire()` appears to clear the current exc_info\n"
+		contents += tabtabtab + "exc_info = sys.exc_info()\n"
 		contents += tabtabtab + "with (yield self._lock.acquire()):\n"
-		contents += tabtabtabtab + fmt.Sprintf("_write_application_exception(ctx, oprot, \"%s\", ex_code=TApplicationExceptionType.INTERNAL_ERROR, message=e.message)\n", methodLower)
+		contents += tabtabtabtab + fmt.Sprintf("_write_application_exception(ctx, oprot, \"%s\", ex_code=TApplicationExceptionType.INTERNAL_ERROR, message=\"Internal error processing {}: {}\".format(\"%s\", e.message))\n", methodLower, methodLower)
 	}
-	contents += tabtabtab + "raise\n"
+	contents += tabtabtab + "raise exc_info[0], exc_info[1], exc_info[2]\n"
 	if !method.Oneway {
 		contents += tabtab + "with (yield self._lock.acquire()):\n"
 		contents += tabtabtab + "try:\n"

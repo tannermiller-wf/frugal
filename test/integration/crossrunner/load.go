@@ -15,6 +15,7 @@ package crossrunner
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"time"
@@ -37,14 +38,16 @@ type options struct {
 }
 
 // language level options defined in tests.json.
-type languages struct { // Example
-	Name       string   // Language name
-	Client     options  // client specific commands, protocols, transports, and timesouts
-	Server     options  // server specific commands, protocols, transports, and timesouts
-	Transports []string // transports that apply to both clients and servers within a language
-	Protocols  []string // protocols that apply to both clients and servers within a language
-	Command    []string // command that applies to both clients and servers within a language
-	Workdir    string   // working directory relative to /test/integration
+type languages struct {
+	Name          string  // Language name
+	Client        options // client specific commands, protocols, transports, and timesouts
+	Server        options // server specific commands, protocols, transports, and timesouts
+	Publisher     options
+	Subscriber    options
+	RpcTransports []string // transports that apply to both clients and servers within a language
+	Protocols     []string // protocols that apply to both clients and servers within a language
+	Command       []string // command that applies to both clients and servers within a language
+	Workdir       string   // working directory relative to /test/integration
 }
 
 //  Complete information required to shell out a client or server command.
@@ -75,49 +78,68 @@ func newPair(client, server Config) *Pair {
 
 // Load takes a json file of client/server definitions and returns a list of
 // valid client/server pairs.
-func Load(jsonFile string) (pairs []*Pair, err error) {
+func Load(jsonFile string) ([]*Pair, []*Pair, error) {
 	bytes, err := ioutil.ReadFile(jsonFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var tests []languages
 
 	// Unmarshal json into defined structs
 	if err := json.Unmarshal(bytes, &tests); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// Create empty lists of client and server configurations
 	var clients []Config
 	var servers []Config
+	var publishers []Config
+	var subscribers []Config
 
 	// Iterate over each language to get all client/server configurations in that language
 	for _, test := range tests {
+		fmt.Printf("%+v\n", test.Publisher)
+		fmt.Printf("%+v\n", test.Subscriber)
 
 		// Append language level transports and protocols to client/server level
-		test.Client.Transports = append(test.Client.Transports, test.Transports...)
-		test.Server.Transports = append(test.Server.Transports, test.Transports...)
+		test.Client.Transports = append(test.Client.Transports, test.RpcTransports...)
+		test.Server.Transports = append(test.Server.Transports, test.RpcTransports...)
 		test.Client.Protocols = append(test.Client.Protocols, test.Protocols...)
 		test.Server.Protocols = append(test.Server.Protocols, test.Protocols...)
+
+		test.Publisher.Protocols = append(test.Publisher.Protocols, test.Protocols...)
+		test.Subscriber.Protocols = append(test.Subscriber.Protocols, test.Protocols...)
 
 		// Get expanded list of clients/servers, using both language and Config level options
 		clients = append(clients, getExpandedConfigs(test.Client, test)...)
 		servers = append(servers, getExpandedConfigs(test.Server, test)...)
+		publishers = append(publishers, getExpandedConfigs(test.Publisher, test)...)
+		subscribers = append(subscribers, getExpandedConfigs(test.Subscriber, test)...)
 	}
 
 	// Find all valid client/server pairs
 	// TODO: Accept some sort of flag(s) that would limit this list of pairs by
 	// desired language(s) or other restrictions
+	rpcPairs := make([]*Pair, 0)
 	for _, client := range clients {
 		for _, server := range servers {
 			if server.Transport == client.Transport && server.Protocol == client.Protocol {
-				pairs = append(pairs, newPair(client, server))
+				rpcPairs = append(rpcPairs, newPair(client, server))
 			}
 		}
 	}
 
-	return pairs, nil
+	pubsubPairs := make([]*Pair, 0)
+	for _, publisher := range publishers {
+		for _, subscriber := range subscribers {
+			if publisher.Transport == subscriber.Transport && publisher.Protocol == subscriber.Protocol {
+				pubsubPairs = append(pubsubPairs, newPair(publisher, subscriber))
+			}
+		}
+	}
+
+	return rpcPairs, pubsubPairs, nil
 }
 
 // getExpandedConfigs takes a client/server at the language level and the options

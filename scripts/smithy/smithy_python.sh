@@ -17,7 +17,7 @@ $FRUGAL_HOME/scripts/smithy/codecov.sh $FRUGAL_HOME/lib/python/unit_tests_py2.xm
 make flake8-py2
 deactivate
 
-virtualenv -p /usr/bin/python3.5 /tmp/frugal-py3
+virtualenv -p /usr/bin/python3 /tmp/frugal-py3
 source /tmp/frugal-py3/bin/activate
 pip install -U pip setuptools==39.0.1
 cd $FRUGAL_HOME/lib/python

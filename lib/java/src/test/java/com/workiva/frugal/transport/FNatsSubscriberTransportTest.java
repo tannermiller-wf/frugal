@@ -1,11 +1,11 @@
 package com.workiva.frugal.transport;
 
 import com.workiva.frugal.protocol.FAsyncCallback;
-import io.nats.client.AsyncSubscription;
 import io.nats.client.Connection;
+import io.nats.client.Connection.Status;
+import io.nats.client.Dispatcher;
 import io.nats.client.Message;
 import io.nats.client.MessageHandler;
-import io.nats.client.Nats;
 import org.apache.thrift.TException;
 import org.apache.thrift.transport.TTransport;
 import org.apache.thrift.transport.TTransportException;
@@ -13,8 +13,6 @@ import org.junit.Before;
 import org.junit.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
-
-import java.io.IOException;
 
 import static com.workiva.frugal.transport.FNatsTransport.FRUGAL_PREFIX;
 import static org.junit.Assert.assertArrayEquals;
@@ -24,8 +22,8 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -38,54 +36,65 @@ public class FNatsSubscriberTransportTest {
     private Connection conn;
     private String topic = "topic";
     private String formattedSubject = FRUGAL_PREFIX + topic;
-    private AsyncSubscription mockSub;
+    private Dispatcher mockDispatcher;
+    private Message mockMessage;
 
     private class Handler implements FAsyncCallback {
         TTransport transport;
         TException exception;
+        RuntimeException runtimeException;
+        Error error;
+
         @Override
         public void onMessage(TTransport transport) throws TException {
             this.transport = transport;
             if (exception != null) {
                 throw exception;
             }
+            if (runtimeException != null) {
+                throw runtimeException;
+            }
+            if (error != null) {
+                throw error;
+            }
         }
     }
 
     @Before
-    public void setUp() throws Exception {
+    public void setUp() {
         conn = mock(Connection.class);
         transport = new FNatsSubscriberTransport.Factory(conn).getTransport();
-        mockSub = mock(AsyncSubscription.class);
+        mockDispatcher = mock(Dispatcher.class);
+        mockMessage = mock(Message.class);
     }
 
     @Test
     public void testSubscribe() throws Exception {
-        when(conn.getState()).thenReturn(Nats.ConnState.CONNECTED);
+        when(conn.getStatus()).thenReturn(Status.CONNECTED);
         ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<MessageHandler> handlerCaptor = ArgumentCaptor.forClass(MessageHandler.class);
 
-        when(conn.subscribe(topicCaptor.capture(), isNull(), handlerCaptor.capture()))
-                .thenReturn(mockSub);
+        when(conn.createDispatcher(handlerCaptor.capture())).thenReturn(mockDispatcher);
 
         Handler handler = new Handler();
         transport.subscribe(topic, handler);
 
         // Nats subscription not yet valid
-        when(mockSub.isValid()).thenReturn(false);
+        when(mockDispatcher.isActive()).thenReturn(false);
         assertFalse(transport.isSubscribed());
 
         // All good now
-        when(mockSub.isValid()).thenReturn(true);
+        when(mockDispatcher.isActive()).thenReturn(true);
         assertTrue(transport.isSubscribed());
-        assertEquals(mockSub, transport.sub);
-
+        assertEquals(mockDispatcher, transport.dispatcher);
+        verify(mockDispatcher, times(1)).subscribe(topicCaptor.capture());
         assertEquals(formattedSubject, topicCaptor.getValue());
 
         // Handle a good frame
         byte[] frame = new byte[]{0, 0, 0, 4, 1, 2, 3, 4};
+        when(mockMessage.getData()).thenReturn(frame);
         MessageHandler messageHandler = handlerCaptor.getValue();
-        messageHandler.onMessage(new Message("foo", null, frame));
+        messageHandler.onMessage(mockMessage);
 
         byte[] expectedPayload = new byte[]{1, 2, 3, 4};
         byte[] actualPayload = new byte[4];
@@ -95,14 +104,27 @@ public class FNatsSubscriberTransportTest {
 
         // Handle a bad frame
         handler.transport = null;
-        messageHandler.onMessage(new Message("foo", null, new byte[3]));
+        when(mockMessage.getData()).thenReturn(new byte[3]);
+        messageHandler.onMessage(mockMessage);
         assertNull(handler.transport);
 
         // Handler an FAsyncCallback error
         handler.exception = new TException("Bad things!");
-        messageHandler.onMessage(new Message("foo", null, frame));
-        actualPayload = new byte[4];
+        when(mockMessage.getData()).thenReturn(frame);
+        messageHandler.onMessage(mockMessage);
+        handler.exception = null;
 
+        handler.runtimeException = new RuntimeException("error");
+        when(mockMessage.getData()).thenReturn(frame);
+        messageHandler.onMessage(mockMessage);
+        handler.runtimeException = null;
+
+        handler.error = new Error("error");
+        when(mockMessage.getData()).thenReturn(frame);
+        messageHandler.onMessage(mockMessage);
+        handler.error = null;
+
+        actualPayload = new byte[4];
         handler.transport.read(actualPayload, 0, 4);
         assertArrayEquals(expectedPayload, actualPayload);
     }
@@ -110,26 +132,26 @@ public class FNatsSubscriberTransportTest {
     @Test
     public void testSubscribeQueue() throws Exception {
         transport = new FNatsSubscriberTransport.Factory(conn, "foo").getTransport();
-        when(conn.getState()).thenReturn(Nats.ConnState.CONNECTED);
+        when(conn.getStatus()).thenReturn(Status.CONNECTED);
         ArgumentCaptor<String> topicCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> queueCaptor = ArgumentCaptor.forClass(String.class);
 
-        when(conn.subscribe(topicCaptor.capture(), queueCaptor.capture(), any(MessageHandler.class)))
-                .thenReturn(mockSub);
+        when(conn.createDispatcher(any(MessageHandler.class))).thenReturn(mockDispatcher);
 
         Handler handler = new Handler();
         transport.subscribe(topic, handler);
-        when(mockSub.isValid()).thenReturn(true);
+        when(mockDispatcher.isActive()).thenReturn(true);
 
         assertTrue(transport.isSubscribed());
-        assertEquals(mockSub, transport.sub);
+        assertEquals(mockDispatcher, transport.dispatcher);
+        verify(mockDispatcher, times(1)).subscribe(topicCaptor.capture(), queueCaptor.capture());
         assertEquals("foo", queueCaptor.getValue());
         assertEquals(formattedSubject, topicCaptor.getValue());
     }
 
     @Test
     public void testSubscribeEmptySubjectThrowsException() throws Exception {
-        when(conn.getState()).thenReturn(Nats.ConnState.CONNECTED);
+        when(conn.getStatus()).thenReturn(Status.CONNECTED);
         try {
             transport.subscribe("", new Handler());
             fail();
@@ -140,26 +162,24 @@ public class FNatsSubscriberTransportTest {
 
     @Test(expected = TTransportException.class)
     public void testSubscribeNotConnectedThrowsException() throws Exception {
-        when(conn.getState()).thenReturn(Nats.ConnState.DISCONNECTED);
+        when(conn.getStatus()).thenReturn(Status.DISCONNECTED);
         transport.subscribe("", new Handler());
     }
 
     @Test
-    public void testCloseSubscriber() throws Exception {
-        transport.sub = mockSub;
+    public void testCloseSubscriber() {
+        transport.dispatcher = mockDispatcher;
         transport.unsubscribe();
-        verify(mockSub).unsubscribe();
         assertFalse(transport.isSubscribed());
         // Make sure unsubscribe doesn't throw an error when called again
         transport.unsubscribe();
     }
 
     @Test
-    public void testCloseSubscriberUnsubscribeException() throws Exception {
-        transport.sub = mockSub;
-        Mockito.doThrow(new IOException("Problem")).when(mockSub).unsubscribe();
+    public void testCloseSubscriberUnsubscribeException() {
+        transport.dispatcher = mockDispatcher;
+        Mockito.doThrow(new IllegalStateException("Problem")).when(mockDispatcher).unsubscribe(formattedSubject);
         transport.unsubscribe();
-        verify(mockSub).unsubscribe();
         assertFalse(transport.isSubscribed());
     }
 }

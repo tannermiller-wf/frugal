@@ -76,7 +76,7 @@ void main() {
         () async {
       MockTransports.http.when(transport.uri, (FinalizedRequest request) async {
         if (request.method == 'POST') {
-          await new Future.delayed(new Duration(milliseconds: 100));
+          throw new TimeoutException("wat");
         }
       });
 

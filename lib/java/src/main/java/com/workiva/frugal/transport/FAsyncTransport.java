@@ -168,6 +168,8 @@ public abstract class FAsyncTransport extends FTransport {
      * Returns the operation id for the FContext. This is a unique long per context. This is protected as operation
      * ids are an internal implementation detail.
      *
+     * @param context FContext associated with the request (used for timeout and logging)
+     *
      * @return operation id
      */
     protected static long getOpId(FContext context) {

@@ -165,7 +165,7 @@ class FBaseProcessor(FProcessor):
             except Exception:
                 # Don't raise an exception because the server should still send
                 # a response to the client.
-                logging.exception(
+                logger.exception(
                     "frugal: exception occurred while processing request with "
                     "correlation id %s", context.correlation_id)
             return

@@ -73,7 +73,7 @@ class FHttpTransport(FTransportBase):
         via the payload size on the server response. Therefore, just call
         through to request.
         """
-        await  self.request(context, payload)
+        await self.request(context, payload)
 
     async def request(self, context: FContext, payload) -> TTransportBase:
         """

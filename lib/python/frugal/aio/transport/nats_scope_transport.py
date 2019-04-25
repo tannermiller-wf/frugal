@@ -70,7 +70,7 @@ class FNatsPublisherTransport(FPublisherTransport):
 
     def is_open(self) -> bool:
         """
-        Check to see if the tranpsort is open.
+        Check to see if the transport is open.
         """
         return self._nats_client.is_connected
 

@@ -99,7 +99,7 @@ type FContext interface {
 // TODO 3.0 consider adding this to the FContext interface.
 func Clone(ctx FContext) FContext {
 	clone := &FContextImpl{
-		requestHeaders: ctx.RequestHeaders(),
+		requestHeaders:  ctx.RequestHeaders(),
 		responseHeaders: ctx.ResponseHeaders(),
 	}
 	clone.requestHeaders[opIDHeader] = getNextOpID()

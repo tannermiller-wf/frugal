@@ -61,8 +61,9 @@ class FByteBuffer {
 
       // Write the appropriate range
       if (amtToCopy > 0) {
-        var range = source.getRange(sourceOffset, sourceOffset + amtToCopy);
-        dest.setRange(destOffset, destOffset + amtToCopy, range);
+        for (var i = 0; i < amtToCopy; i++) {
+          dest[destOffset + i] = source[sourceOffset + i];
+        }
       }
     }
     return amtToCopy;

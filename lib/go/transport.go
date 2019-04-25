@@ -40,8 +40,7 @@ type FPublisherTransport interface {
 	IsOpen() bool
 
 	// GetPublishSizeLimit returns the maximum allowable size of a payload
-	// to be published. A non-positive number is returned to indicate an
-	// unbounded allowable size.
+	// to be published. 0 is returned to indicate an unbounded allowable size.
 	GetPublishSizeLimit() uint
 
 	// Publish sends the given payload with the transport. Implementations

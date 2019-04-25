@@ -17,17 +17,23 @@ from .nats_scope_transport import FNatsSubscriberTransportFactory
 from .nats_scope_transport import FNatsSubscriberTransport
 from .nats_transport import FNatsTransport
 from .http_transport import FHttpTransport
+from .stomp_transport import FStompPublisherTransportFactory
+from .stomp_transport import _FStompPublisherTransport
+from .stomp_transport import FStompSubscriberTransportFactory
+from .stomp_transport import _FStompSubscriberTransport
 
 
 __all__ = [
     'FTransportBase',
     'FAsyncTransport',
     'FNatsTransport',
-    'FNatsScopeTransportFactory',
-    'FNatsScopeTransport',
     'FHttpTransport',
     'FNatsPublisherTransportFactory',
     'FNatsPublisherTransport',
     'FNatsSubscriberTransportFactory',
     'FNatsSubscriberTransport',
+    'FStompPublisherTransportFactory',
+    '_FStompPublisherTransport',
+    'FStompSubscriberTransportFactory',
+    '_FStompSubscriberTransport'
 ]

@@ -48,7 +48,7 @@ class EventUI {
 
   _initConnection() async {
     var uri = Uri.parse("http://localhost:9090/frugal");
-    var transport = new frugal.FHttpTransport(new wt.Client(), uri);
+    var transport = new frugal.FHttpTransport(new wt.HttpClient(), uri);
     await transport.open();
 
     // Wire up FServiceProvider

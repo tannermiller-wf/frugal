@@ -57,8 +57,7 @@ func StartClient(
 	}
 
 	fProtocolFactory := frugal.NewFProtocolFactory(protocolFactory)
-
-	conn := getNatsConn()
+	natsConn := getNatsConn()
 
 	/*
 		Pub/Sub Test
@@ -74,10 +73,12 @@ func StartClient(
 				panic(err)
 			}
 
-			pfactory := frugal.NewFNatsPublisherTransportFactory(conn)
-			sfactory := frugal.NewFNatsSubscriberTransportFactory(conn)
+			pfactory := frugal.NewFNatsPublisherTransportFactory(natsConn)
+			sfactory := frugal.NewFNatsSubscriberTransportFactory(natsConn)
+
 			provider := frugal.NewFScopeProvider(pfactory, sfactory, frugal.NewFProtocolFactory(protocolFactory))
 			publisher := frugaltest.NewEventsPublisher(provider)
+
 			if err := publisher.Open(); err != nil {
 				panic(err)
 			}
@@ -117,7 +118,7 @@ func StartClient(
 	var trans frugal.FTransport
 	switch transport {
 	case NatsName:
-		trans = frugal.NewFNatsTransport(conn, fmt.Sprintf("frugal.foo.bar.rpc.%d", port), "")
+		trans = frugal.NewFNatsTransport(natsConn, fmt.Sprintf("frugal.foo.bar.rpc.%d", port), "")
 	case HttpName:
 		// Set request and response capacity to 1mb
 		maxSize := uint(1048576)

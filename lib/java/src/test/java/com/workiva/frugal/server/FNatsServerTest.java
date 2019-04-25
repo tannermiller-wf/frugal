@@ -4,8 +4,8 @@ import com.workiva.frugal.middleware.ServiceMiddleware;
 import com.workiva.frugal.processor.FProcessor;
 import com.workiva.frugal.protocol.FProtocol;
 import com.workiva.frugal.protocol.FProtocolFactory;
-import io.nats.client.AsyncSubscription;
 import io.nats.client.Connection;
+import io.nats.client.Dispatcher;
 import io.nats.client.Message;
 import io.nats.client.MessageHandler;
 import org.apache.thrift.TException;
@@ -17,12 +17,12 @@ import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 import org.mockito.ArgumentCaptor;
 
-import java.io.IOException;
 import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -74,15 +74,14 @@ public class FNatsServerTest {
     }
 
     @Test
-    public void testServe() throws TException, IOException, InterruptedException {
+    public void testServe() throws TException, InterruptedException {
         server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
                 .withQueueGroup(queue).build();
         ArgumentCaptor<String> subjectCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> queueCaptor = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<MessageHandler> handlerCaptor = ArgumentCaptor.forClass(MessageHandler.class);
-        AsyncSubscription sub = mock(AsyncSubscription.class);
-        when(mockConn.subscribe(subjectCaptor.capture(), queueCaptor.capture(), handlerCaptor.capture()))
-                .thenReturn(sub);
+        Dispatcher mockDispatcher = mock(Dispatcher.class);
+        when(mockConn.createDispatcher(handlerCaptor.capture())).thenReturn(mockDispatcher);
 
         CountDownLatch stopSignal = new CountDownLatch(1);
 
@@ -98,15 +97,106 @@ public class FNatsServerTest {
         server.stop();
 
         stopSignal.await(); // wait for orderly shutdown
+        verify(mockDispatcher).subscribe(subjectCaptor.capture(), queueCaptor.capture());
 
         assertEquals(subject, subjectCaptor.getValue());
         assertEquals(queue, queueCaptor.getValue());
         assertNotNull(handlerCaptor.getValue());
-        verify(sub).unsubscribe();
+        verify(mockConn).closeDispatcher(mockDispatcher);
+        assertEquals(subject, subjectCaptor.getValue());
+    }
+
+    @Test(timeout = 5000)
+    public void testCallingServeAfterStopDoesNotBlock() throws Exception {
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+            .withQueueGroup(queue).build();
+        Dispatcher mockDispatcher = mock(Dispatcher.class);
+        when(mockConn.createDispatcher(any())).thenReturn(mockDispatcher);
+        server.stop();
+        server.serve();
+    }
+
+    @Test(timeout = 5000)
+    public void testCallingStopTwiceDoesNotBlock() throws Exception {
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+            .withQueueGroup(queue).build();
+        Dispatcher mockDispatcher = mock(Dispatcher.class);
+        when(mockConn.createDispatcher(any())).thenReturn(mockDispatcher);
+        server.stop();
+        server.stop();
+    }
+
+    @Test(timeout = 5000)
+    public void testCallingStopWithoutServerDoesNotBlock() throws Exception {
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+            .withQueueGroup(queue).build();
+        Dispatcher mockDispatcher = mock(Dispatcher.class);
+        when(mockConn.createDispatcher(any())).thenReturn(mockDispatcher);
+        server.stop();
+    }
+
+    @Test(timeout = 5000)
+    public void testInterruptingServerExitsWithoutStopping() throws Exception {
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+                .withQueueGroup(queue).build();
+        Dispatcher mockDispatcher = mock(Dispatcher.class);
+        when(mockConn.createDispatcher(any())).thenReturn(mockDispatcher);
+
+        CountDownLatch stopSignal = new CountDownLatch(1);
+
+        // start/stop the server
+        Thread firstServeThread = new Thread(() -> {
+            try {
+                server.serve();
+                stopSignal.countDown(); // signal server stop
+            } catch (TException e) {
+                fail(e.getMessage());
+            }
+        });
+
+        Thread secondServeThread = new Thread(() -> {
+            try {
+                server.serve();
+                fail("second serve should not exit");
+            } catch (TException e) {
+                fail(e.getMessage());
+            }
+        });
+        firstServeThread.start();
+        secondServeThread.start();
+        firstServeThread.interrupt();
+        stopSignal.await(); // wait for orderly shutdown
+    }
+
+
+    @Test
+    public void testStopWithDefaultTimeout() throws Exception {
+        ExecutorService mockExecutorService = mock(ExecutorService.class);
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+            .withQueueGroup(queue)
+            .withExecutorService(mockExecutorService)
+            .build();
+        server.stop();
+        verify(mockExecutorService, times(1)).shutdown();
+        verify(mockExecutorService, times(1))
+            .awaitTermination(FNatsServer.DEFAULT_STOP_TIMEOUT_NS, TimeUnit.NANOSECONDS);
     }
 
     @Test
-    public void testRequestHandler() {
+    public void testStopWithBuilderTimeout() throws Exception {
+        ExecutorService mockExecutorService = mock(ExecutorService.class);
+        server = new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
+            .withQueueGroup(queue)
+            .withExecutorService(mockExecutorService)
+            .withStopTimeout(1, TimeUnit.SECONDS)
+            .build();
+        server.stop();
+        verify(mockExecutorService, times(1)).shutdown();
+        verify(mockExecutorService, times(1)).awaitTermination(TimeUnit.SECONDS.toNanos(1), TimeUnit.NANOSECONDS);
+    }
+
+    @Test
+    public void testRequestHandler() throws InterruptedException  {
         ExecutorService executor = mock(ExecutorService.class);
         FNatsServer server =
                 new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
@@ -114,9 +204,10 @@ public class FNatsServerTest {
         MessageHandler handler = server.newRequestHandler();
         String reply = "reply";
         byte[] data = "this is a request".getBytes();
-        Message msg = new Message(subject, reply, data);
-
-        handler.onMessage(msg);
+        Message mockMessage = mock(Message.class);
+        when(mockMessage.getData()).thenReturn(data);
+        when(mockMessage.getReplyTo()).thenReturn(reply);
+        handler.onMessage(mockMessage);
 
         ArgumentCaptor<Runnable> captor = ArgumentCaptor.forClass(Runnable.class);
         verify(executor).execute(captor.capture());
@@ -132,22 +223,23 @@ public class FNatsServerTest {
     }
 
     @Test
-    public void testRequestHandler_noReply() {
+    public void testRequestHandlerNoReply() throws InterruptedException  {
         ExecutorService executor = mock(ExecutorService.class);
         FNatsServer server =
                 new FNatsServer.Builder(mockConn, mockProcessor, mockProtocolFactory, new String[]{subject})
                 .withExecutorService(executor).build();
         MessageHandler handler = server.newRequestHandler();
         byte[] data = "this is a request".getBytes();
-        Message msg = new Message(subject, null, data);
-
-        handler.onMessage(msg);
+        Message mockMessage = mock(Message.class);
+        when(mockMessage.getData()).thenReturn(data);
+        when(mockMessage.getReplyTo()).thenReturn(null);
+        handler.onMessage(mockMessage);
 
         verifyNoMoreInteractions(executor);
     }
 
     @Test
-    public void testRequestProcess() throws TException, IOException {
+    public void testRequestProcess() {
         byte[] data = "xxxxhello".getBytes();
         long timestamp = System.currentTimeMillis();
         String reply = "reply";
@@ -164,7 +256,7 @@ public class FNatsServerTest {
     }
 
     @Test
-    public void testRequestProcessRuntimeException() throws TException, IOException {
+    public void testRequestProcessRuntimeException() {
         byte[] data = "xxxxhello".getBytes();
         long timestamp = System.currentTimeMillis();
         String reply = "reply";
@@ -181,7 +273,7 @@ public class FNatsServerTest {
     }
 
     @Test
-    public void testRequestProcess_noResponse() throws TException, IOException {
+    public void testRequestProcess_noResponse() {
         byte[] data = "xxxxhello".getBytes();
         long timestamp = System.currentTimeMillis();
         String reply = "reply";

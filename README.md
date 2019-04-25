@@ -215,7 +215,7 @@ Some common annotations are listed below
 | Annotation    | Values        | Allowed Places | Description
 | ------------- | ------------- | -------------- | -----------
 | vendor        | Optional location | Namespaces, Includes | See [vendoring includes](#vendoring-includes)
-| deprecated    | Optional description | Service methods, Struct/union/exception fields | Marks a method or field as deprecated (if supported by the language, or in a comment otherwise), and logs a warning if a deprecated method is called.
+| deprecated    | Optional description | Service methods, Struct/union/exception fields | See [deprecating](#deprecating)
 
 ### Vendoring Includes
 
@@ -272,6 +272,35 @@ generate code for `bar.frugal` since `use_vendor` is set and the "providing"
 IDL has a vendor path set for the Go namespace. Instead, the generated code for
 `foo.frugal` will reference the vendor path specified in `bar.frugal`
 (github.com/Workiva/my-repo/gen-go/bar).
+
+### Deprecating
+Marks a method or field as deprecated (if supported by the language, or in a comment otherwise), and logs a warning if a deprecated method is called. This is not available on an entire struct, only the fields within the struct.
+```
+  Struct GetFooRequest {
+      1: String value (deprecated="Use newValue instead")
+  }
+
+  GetFooResponse getFoo(10: GetFooRequest request) throws (
+    1: FooError error
+  ) (deprecated="Use getBar instead")
+```
+In Dart, this compiles to
+```
+class GetFooRequest implements thrift.TBase {
+  ...
+
+  /// Deprecated: Use newValue instead
+  @deprecated
+  List<String> _value;
+  ...
+}
+```
+
+```
+  /// Deprecated: Use getBar instead
+  @deprecated
+  Future<namespace.GetFooResponse> getFoo(frugal.FContext ctx, namespace.GetFooRequest request);
+```
 
 
 ## Thrift Parity

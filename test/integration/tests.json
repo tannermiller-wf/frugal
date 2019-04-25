@@ -1,9 +1,9 @@
 [
-    {
+  {
     "name": "dart",
     "client": {
       "timeout": 15,
-      "transports": [ "http" ],
+      "rpcTransports": [ "http" ],
       "protocols": [ "binary", "compact", "json" ],
       "command": [ "dart", "test_client/bin/main.dart" ]
     },
@@ -23,7 +23,21 @@
         "go/bin/testclient"
       ]
     },
-    "transports": ["nats", "http"],
+    "publisher": {
+      "timeout": 20,
+      "command": [
+        "go/bin/testpublisher"
+      ],
+      "transports": [ "activemq" ]
+    },
+    "subscriber": {
+      "timeout": 20,
+      "command": [
+        "go/bin/testsubscriber"
+      ],
+      "transports": [ "activemq" ]
+    },
+    "rpcTransports": [ "nats", "http" ],
     "protocols": ["binary", "compact", "json"]
   },
   {
@@ -37,6 +51,16 @@
       "timeout": 15,
       "command": [ "/usr/bin/java", "-Djava.security.egd=file:///dev/urandom", "-cp", "cross.jar", "com.workiva.TestServer" ],
       "transports": [ "nats", "http" ]
+    },
+    "publisher": {
+      "timeout": 20,
+      "command": [ "/usr/bin/java", "-Djava.security.egd=file:///dev/urandom", "-cp", "cross.jar", "com.workiva.TestPublisher" ],
+      "transports": ["activemq"]
+    },
+    "subscriber": {
+      "timeout": 20,
+      "command": [ "/usr/bin/java", "-Djava.security.egd=file:///dev/urandom", "-cp", "cross.jar", "com.workiva.TestSubscriber" ],
+      "transports": ["activemq"]
     },
     "protocols": [ "binary", "compact", "json" ],
     "workdir": "java/frugal-integration-test"
@@ -61,7 +85,7 @@
       "timeout": 7,
       "command": [ "python", "-u", "tornado_server.py" ]
     },
-    "transports": [ "nats", "http" ],
+    "rpcTransports": [ "nats", "http" ],
     "protocols": [ "binary", "compact", "json" ],
     "workdir": "python/tornado"
   },
@@ -69,13 +93,23 @@
     "name": "py:asyncio",
     "client": {
       "timeout": 7,
-      "command": ["python3.5", "-u", "client.py" ]
+      "command": ["python3", "-u", "client.py" ]
     },
     "server": {
       "timeout": 7,
-      "command": [ "python3.5", "-u", "server.py" ]
+      "command": [ "python3", "-u", "server.py" ]
     },
-    "transports": [ "nats", "http" ],
+    "publisher": {
+      "timeout": 20,
+      "command": ["python3", "-u", "publisher.py"],
+      "transports": ["activemq"]
+    },
+    "subscriber": {
+      "timeout": 20,
+      "command": ["python3", "-u", "subscriber.py"],
+      "transports": ["activemq"]
+    },
+    "rpcTransports": [ "nats", "http" ],
     "protocols": [ "binary", "compact", "json" ],
     "workdir": "python/aio"
   },
@@ -89,7 +123,7 @@
       "timeout": 7,
       "command": [ "python", "-u", "vanilla_server.py" ]
     },
-    "transports": [ "http" ], 
+    "rpcTransports": [ "http" ],
     "protocols": [ "binary", "compact", "json" ],
     "workdir": "python/tornado"
   }

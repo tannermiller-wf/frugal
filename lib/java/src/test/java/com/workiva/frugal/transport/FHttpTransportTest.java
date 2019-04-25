@@ -1,12 +1,14 @@
 package com.workiva.frugal.transport;
 
 import com.workiva.frugal.FContext;
+import com.workiva.frugal.exception.TTransportExceptionType;
 import com.workiva.frugal.transport.FHttpTransport.FHttpTransportHeaders;
 
 import org.apache.commons.codec.binary.Base64;
 import org.apache.http.Header;
 import org.apache.http.HttpStatus;
 import org.apache.http.HttpVersion;
+import org.apache.http.NoHttpResponseException;
 import org.apache.http.ProtocolVersion;
 import org.apache.http.StatusLine;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -33,7 +35,8 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Mockito.any;
+import static org.junit.Assert.fail;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -296,18 +299,40 @@ public class FHttpTransportTest {
         assertEquals(expected.getURI(), actual.getURI());
     }
 
-    @Test(expected = TTransportException.class)
+    @Test
     public void testSend_requestIOException() throws TTransportException, IOException {
         byte[] buff = "helloserver".getBytes();
         when(client.execute(any(HttpPost.class))).thenThrow(new IOException());
-        transport.request(context, buff);
+        try {
+            transport.request(context, buff);
+            fail();
+        } catch (TTransportException e) {
+            assertEquals(e.getType(), TTransportException.UNKNOWN);
+        }
     }
 
-    @Test(expected = TTransportException.class)
+    @Test
     public void testSend_requestTimeoutException() throws TTransportException, IOException {
         byte[] buff = "helloserver".getBytes();
         when(client.execute(any(HttpPost.class))).thenThrow(new SocketTimeoutException());
-        transport.request(context, buff);
+        try {
+            transport.request(context, buff);
+            fail();
+        } catch (TTransportException e) {
+            assertEquals(e.getType(), TTransportException.TIMED_OUT);
+        }
+    }
+
+    @Test
+    public void testSend_requestNoResponse() throws TTransportException, IOException {
+        byte[] buff = "helloserver".getBytes();
+        when(client.execute(any(HttpPost.class))).thenThrow(new NoHttpResponseException("test"));
+        try {
+            transport.request(context, buff);
+            fail();
+        } catch (TTransportException e) {
+            assertEquals(e.getType(), TTransportExceptionType.END_OF_FILE);
+        }
     }
 
     @Test(expected = TTransportException.class)

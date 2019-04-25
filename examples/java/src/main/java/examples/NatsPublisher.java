@@ -7,35 +7,35 @@ import com.workiva.frugal.transport.FNatsPublisherTransport;
 import com.workiva.frugal.transport.FNatsSubscriberTransport;
 import com.workiva.frugal.transport.FPublisherTransportFactory;
 import com.workiva.frugal.transport.FSubscriberTransportFactory;
-import io.nats.client.Connection;
-import io.nats.client.ConnectionFactory;
-import io.nats.client.Nats;
-import org.apache.thrift.TException;
-import org.apache.thrift.protocol.TBinaryProtocol;
 import v1.music.Album;
 import v1.music.AlbumWinnersPublisher;
 import v1.music.PerfRightsOrg;
 import v1.music.Track;
 
+import io.nats.client.Connection;
+import io.nats.client.Nats;
+import io.nats.client.Options;
+import org.apache.thrift.TException;
+import org.apache.thrift.protocol.TBinaryProtocol;
+
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Create a NATS PubSub publisher.
  */
 public class NatsPublisher {
 
-    public static void main(String[] args) throws TException, IOException, TimeoutException {
+    public static void main(String[] args) throws TException, IOException, InterruptedException {
         // Specify the protocol used for serializing requests.
         // The protocol stack must match the protocol stack of the subscriber.
         FProtocolFactory protocolFactory = new FProtocolFactory(new TBinaryProtocol.Factory());
 
         // Create a NATS client (using default options for local dev)
-        ConnectionFactory cf = new ConnectionFactory(Nats.DEFAULT_URL);
-        Connection conn = cf.createConnection();
+        Options.Builder optionsBuilder = new Options.Builder().server(Options.DEFAULT_URL);
+        Connection conn = Nats.connect(optionsBuilder.build());
 
         // Create the pubsub scope provider, given the NATs connection and protocol
         FPublisherTransportFactory publisherFactory = new FNatsPublisherTransport.Factory(conn);

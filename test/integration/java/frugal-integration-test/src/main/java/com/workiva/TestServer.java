@@ -39,8 +39,8 @@ import frugal.test.EventsPublisher;
 import frugal.test.EventsSubscriber;
 import frugal.test.FFrugalTest;
 import io.nats.client.Connection;
-import io.nats.client.ConnectionFactory;
 import io.nats.client.Nats;
+import io.nats.client.Options;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
@@ -79,8 +79,8 @@ public class TestServer {
             TProtocolFactory protocolFactory = whichProtocolFactory(protocolType);
             FProtocolFactory fProtocolFactory = new FProtocolFactory(protocolFactory);
 
-            ConnectionFactory cf = new ConnectionFactory("nats://localhost:4222");
-            Connection conn = cf.createConnection();
+            Options.Builder optionsBuilder = new Options.Builder().server(Options.DEFAULT_URL);
+            Connection conn = Nats.connect(optionsBuilder.build());
 
             List<String> validTransports = Arrays.asList(Utils.natsName, Utils.httpName);
 
@@ -249,9 +249,9 @@ public class TestServer {
         }
 
         public void run() {
-            ConnectionFactory cf = new ConnectionFactory(Nats.DEFAULT_URL);
+            Options.Builder optionsBuilder = new Options.Builder().server(Options.DEFAULT_URL);
             try {
-                Connection conn = cf.createConnection();
+                Connection conn = Nats.connect(optionsBuilder.build());
                 FPublisherTransportFactory publisherFactory = new FNatsPublisherTransport.Factory(conn);
                 FSubscriberTransportFactory subscriberFactory = new FNatsSubscriberTransport.Factory(conn);
                 FScopeProvider provider = new FScopeProvider(publisherFactory, subscriberFactory, protocolFactory);
@@ -283,7 +283,7 @@ public class TestServer {
                     System.out.println("Error subscribing" + e.getMessage());
                 }
                 System.out.println("Subscriber started...");
-            } catch (IOException e) {
+            } catch (IOException | InterruptedException e) {
                 System.out.println("Error connecting to nats" + e.getMessage());
             }
         }

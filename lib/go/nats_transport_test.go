@@ -25,7 +25,7 @@ import (
 )
 
 type mockRegistry struct {
-	frameC chan ([]byte)
+	frameC chan []byte
 	err    error
 }
 
