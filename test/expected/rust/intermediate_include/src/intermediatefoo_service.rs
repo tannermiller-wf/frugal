@@ -140,37 +140,65 @@ pub enum FIntermediateFooResponse {
     IntermeidateFoo(FIntermediateFooIntermeidateFooResult),
 }
 
-pub struct FIntermediateFooClient<S0>
+pub struct FIntermediateFooClient<S>
 where
-    S0: Service<
+    S: Service<
         Request = FIntermediateFooRequest,
         Response = FIntermediateFooResponse,
         Error = thrift::Error,
     >,
 {
-    service: S0,
+    service: S,
 }
 
-impl<T> FIntermediateFooClient<FIntermediateFooClientService<T>>
-where
-    T: FTransport,
-{
-    pub fn new(
-        provider: FServiceProvider<T>,
-    ) -> FIntermediateFooClient<FIntermediateFooClientService<T>> {
-        FIntermediateFooClient {
-            service: FIntermediateFooClientService {
-                transport: provider.transport,
-                input_protocol_factory: provider.input_protocol_factory,
-                output_protocol_factory: provider.output_protocol_factory,
-            },
+pub struct FIntermediateFooClientBuilder<M> {
+    middleware: M,
+}
+
+impl FIntermediateFooClientBuilder<middleware::Identity> {
+    pub fn new() -> Self {
+        FIntermediateFooClientBuilder {
+            middleware: middleware::Identity::new(),
         }
     }
 }
 
-impl<S0> FIntermediateFoo for FIntermediateFooClient<S0>
+impl<M> FIntermediateFooClientBuilder<M> {
+    pub fn middleware<U>(
+        self,
+        middleware: U,
+    ) -> FIntermediateFooClientBuilder<<M as Chain<U>>::Output>
+    where
+        M: Chain<U>,
+    {
+        FIntermediateFooClientBuilder {
+            middleware: self.middleware.chain(middleware),
+        }
+    }
+
+    pub fn build<T>(self, provider: FServiceProvider<T>) -> FIntermediateFooClient<M::Service>
+    where
+        T: FTransport,
+        M: Middleware<
+            FIntermediateFooClientService<T>,
+            Request = FIntermediateFooRequest,
+            Response = FIntermediateFooResponse,
+            Error = thrift::Error,
+        >,
+    {
+        FIntermediateFooClient {
+            service: self.middleware.wrap(FIntermediateFooClientService {
+                transport: provider.transport,
+                input_protocol_factory: provider.input_protocol_factory,
+                output_protocol_factory: provider.output_protocol_factory,
+            }),
+        }
+    }
+}
+
+impl<S> FIntermediateFoo for FIntermediateFooClient<S>
 where
-    S0: Service<
+    S: Service<
         Request = FIntermediateFooRequest,
         Response = FIntermediateFooResponse,
         Error = thrift::Error,

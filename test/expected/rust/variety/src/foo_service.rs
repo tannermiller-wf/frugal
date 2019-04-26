@@ -1994,63 +1994,58 @@ pub enum FFooResponse {
     BaseFooBasePing(actual_base_rust::basefoo_service::FBaseFooBasePingResult),
 }
 
-pub struct FFooClient<S0, S1>
+pub struct FFooClient<S>
 where
-    S0: Service<
-        Request = actual_base_rust::basefoo_service::FBaseFooRequest,
-        Response = actual_base_rust::basefoo_service::FBaseFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+    S: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
 {
-    base_foo_client: actual_base_rust::basefoo_service::FBaseFooClient<S0>,
-    service: S1,
+    service: S,
 }
 
-impl<T>
-    FFooClient<actual_base_rust::basefoo_service::FBaseFooClientService<T>, FFooClientService<T>>
-where
-    T: FTransport,
-{
-    pub fn new(
-        provider: FServiceProvider<T>,
-    ) -> FFooClient<actual_base_rust::basefoo_service::FBaseFooClientService<T>, FFooClientService<T>>
-    {
-        FFooClient {
-            base_foo_client: actual_base_rust::basefoo_service::FBaseFooClient::new(
-                provider.clone(),
-            ),
-            service: FFooClientService {
-                transport: provider.transport,
-                input_protocol_factory: provider.input_protocol_factory,
-                output_protocol_factory: provider.output_protocol_factory,
-            },
+pub struct FFooClientBuilder<M> {
+    middleware: M,
+}
+
+impl FFooClientBuilder<middleware::Identity> {
+    pub fn new() -> Self {
+        FFooClientBuilder {
+            middleware: middleware::Identity::new(),
         }
     }
 }
 
-impl<S0, S1> actual_base_rust::basefoo_service::FBaseFoo for FFooClient<S0, S1>
-where
-    S0: Service<
-        Request = actual_base_rust::basefoo_service::FBaseFooRequest,
-        Response = actual_base_rust::basefoo_service::FBaseFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
-{
-    fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        self.base_foo_client.base_ping(ctx)
+impl<M> FFooClientBuilder<M> {
+    pub fn middleware<U>(self, middleware: U) -> FFooClientBuilder<<M as Chain<U>>::Output>
+    where
+        M: Chain<U>,
+    {
+        FFooClientBuilder {
+            middleware: self.middleware.chain(middleware),
+        }
+    }
+
+    pub fn build<T>(self, provider: FServiceProvider<T>) -> FFooClient<M::Service>
+    where
+        T: FTransport,
+        M: Middleware<
+            FFooClientService<T>,
+            Request = FFooRequest,
+            Response = FFooResponse,
+            Error = thrift::Error,
+        >,
+    {
+        FFooClient {
+            service: self.middleware.wrap(FFooClientService {
+                transport: provider.transport,
+                input_protocol_factory: provider.input_protocol_factory,
+                output_protocol_factory: provider.output_protocol_factory,
+            }),
+        }
     }
 }
 
-impl<S0, S1> FFoo for FFooClient<S0, S1>
+impl<S> FFoo for FFooClient<S>
 where
-    S0: Service<
-        Request = actual_base_rust::basefoo_service::FBaseFooRequest,
-        Response = actual_base_rust::basefoo_service::FBaseFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+    S: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
 {
     fn ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
         let args = FFooPingArgs {};
@@ -2296,6 +2291,20 @@ where
                 )))
             }
             _ => panic!("FFooClient::say_again() received an incorrect response"),
+        }
+    }
+}
+
+impl<S> actual_base_rust::basefoo_service::FBaseFoo for FFooClient<S>
+where
+    S: Service<Request = FFooRequest, Response = FFooResponse, Error = thrift::Error>,
+{
+    fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
+        let args = actual_base_rust::basefoo_service::FBaseFooBasePingArgs {};
+        let request = FFooRequest::new(ctx.clone(), FFooMethod::BaseFooBasePing(args));
+        match self.service.call(request).wait()? {
+            FFooResponse::BaseFooBasePing(result) => Ok(()),
+            _ => panic!("FFooClient::base_ping() received an incorrect response"),
         }
     }
 }

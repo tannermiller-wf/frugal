@@ -1159,73 +1159,70 @@ func (g *Generator) generateMethodSignature(method *parser.Method) string {
 		methodName(method.Name), commaSpaceJoin(g.generateMethodArguments(method.Arguments)), g.toRustType(method.ReturnType, false))
 }
 
-func (g *Generator) implServiceForClient(implSvcName string, modName string, s *parser.Service, paramNames []string, svcBounds string) string {
+func (g *Generator) implServiceForClient(implSvcName string, modName string, s *parser.Service, numMethods int) string {
 	sName := typeName(s.Name)
 	var buffer bytes.Buffer
-	pNames := strings.Join(paramNames, ",")
 	buffer.WriteString(fmt.Sprintf(`
-				impl<%s> %sF%s for F%sClient<%s>
+				impl<S> %sF%s for F%sClient<S>
 				where
-					%s
+    				S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
 				{
-				`, pNames, modName, sName, implSvcName, pNames, svcBounds))
+				`, modName, sName, implSvcName, implSvcName, implSvcName))
 	for _, method := range s.Methods {
 		mName := typeName(method.Name)
+		argName := fmt.Sprintf("%s%s", sName, mName)
 		args := make([]string, 0, len(method.Arguments))
 		for _, f := range method.Arguments {
 			args = append(args, methodName(f.Name))
 		}
 		buffer.WriteString(fmt.Sprintf("%s {\n", g.generateMethodSignature(method)))
-		if modName == "" {
-			buffer.WriteString(fmt.Sprintf(`let args = F%s%sArgs { %s };
+		methodVariant := mName
+		if sName != implSvcName {
+			methodVariant = fmt.Sprintf("%s%s", sName, methodVariant)
+		}
+		buffer.WriteString(fmt.Sprintf(`let args = %sF%sArgs { %s };
 						let request = F%sRequest::new(ctx.clone(), F%sMethod::%s(args));
 						`,
-				sName, mName, commaSpaceJoin(args),
-				implSvcName, sName, mName))
-			buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait()? {
-							F%sResponse::%s(result) => `, sName, mName))
-			if method.ReturnType == nil {
-				buffer.WriteString("Ok(()),\n")
-			} else {
-				buffer.WriteString("{\n")
-				for _, exc := range method.Exceptions {
-					eName := methodName(exc.Name)
-					buffer.WriteString(fmt.Sprintf(`if let Some(%s) = result.%s {
+			modName, argName, commaSpaceJoin(args),
+			implSvcName, implSvcName, methodVariant))
+		buffer.WriteString(fmt.Sprintf(`match self.service.call(request).wait()? {
+							F%sResponse::%s(result) => `, implSvcName, methodVariant))
+		if method.ReturnType == nil {
+			buffer.WriteString("Ok(()),\n")
+		} else {
+			buffer.WriteString("{\n")
+			for _, exc := range method.Exceptions {
+				eName := methodName(exc.Name)
+				buffer.WriteString(fmt.Sprintf(`if let Some(%s) = result.%s {
 						return Err(thrift::Error::User(Box::new(%s)));
 					};
 					`, eName, eName, eName))
-				}
-				buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
+			}
+			buffer.WriteString(fmt.Sprintf(`if let Some(success) = result.success {
 						return Ok(success);
 					};
 					Err(thrift::Error::Application(thrift::ApplicationError::new(thrift::ApplicationErrorKind::MissingResult, "result was not returned for \"%s\"")))
 				}`, mName))
-			}
-			if len(s.Methods) > 1 {
-				buffer.WriteString(fmt.Sprintf(`_ => panic!("F%sClient::%s() received an incorrect response"),
-					`, implSvcName, methodName(method.Name)))
-			}
-			// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
-			buffer.WriteString("}\n")
-		} else {
-			buffer.WriteString(fmt.Sprintf("self.%s_client.%s(ctx, %s)", methodName(s.Name), methodName(method.Name), strings.Join(g.generateMethodArguments(method.Arguments), ",")))
 		}
-		buffer.WriteString("}\n\n")
+		if numMethods > 1 {
+			buffer.WriteString(fmt.Sprintf(`_ => panic!("F%sClient::%s() received an incorrect response"),
+					`, implSvcName, methodName(method.Name)))
+		}
+		// TODO: In the go code, there is a bunch of handling for catching payload too large exceptions
+		buffer.WriteString("}\n}\n\n")
 	}
 	buffer.WriteString("}\n\n")
-	return buffer.String()
-}
 
-func (g *Generator) clientServiceTraits(s *parser.Service) ([]string, string) {
-	svcBounds := g.clientServiceTraitsInner(s, "")
-	paramNames := make([]string, 0, len(svcBounds))
-	whereClause := make([]string, 0, len(svcBounds))
-	for i, svcBound := range svcBounds {
-		next := fmt.Sprintf("S%v", i)
-		paramNames = append(paramNames, next)
-		whereClause = append(whereClause, fmt.Sprintf("%s: %s", next, svcBound))
+	if extendsService := s.ExtendsServiceStruct(); extendsService != nil {
+		modName := s.ExtendsInclude()
+		if namespace := g.Frugal.NamespaceForInclude(s.ExtendsInclude(), lang); namespace != nil {
+			modName = namespace.Value
+		}
+		modName = fmt.Sprintf("%s::%s_service::", includeNameToReference(modName), strings.ToLower(extendsService.Name))
+		buffer.WriteString("\n\n")
+		buffer.WriteString(g.implServiceForClient(implSvcName, modName, extendsService, numMethods))
 	}
-	return paramNames, strings.Join(whereClause, ",\n")
+	return buffer.String()
 }
 
 func (g *Generator) clientServiceTraitsInner(s *parser.Service, include string) []string {
@@ -1419,59 +1416,57 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	}
 	buffer.WriteString("}\n\n")
 
-	// write the service client
-	paramNames, svcBounds := g.clientServiceTraits(s)
-	extendServiceField := ""
-	extendServiceFieldInst := ""
-	extendsClientService := ""
-	extendsModName := ""
-	if s.Extends != "" {
-		svcName := s.Extends
-		splitExtends := strings.Split(s.Extends, ".")
-		if len(splitExtends) > 1 {
-			svcName = splitExtends[1]
-			localModName := splitExtends[0]
-			if namespace := g.Frugal.NamespaceForInclude(splitExtends[0], lang); namespace != nil {
-				localModName = namespace.Value
-			}
-			extendsModName = fmt.Sprintf("%s::%s_service::", includeNameToReference(localModName), strings.ToLower(splitExtends[1]))
-		}
-		tName := typeName(svcName)
-		mName := methodName(svcName)
-		extendServiceField = fmt.Sprintf("%s_client: %sF%sClient<%s>,", mName, extendsModName, tName, "S0")
-		extendServiceFieldInst = fmt.Sprintf("%s_client: %sF%sClient::new(provider.clone()),", mName, extendsModName, tName)
-		extendsClientService = fmt.Sprintf("%sF%sClientService<T>, ", extendsModName, tName)
-	}
-	buffer.WriteString(fmt.Sprintf(`pub struct F%sClient<%s>
+	buffer.WriteString(fmt.Sprintf(`pub struct F%sClient<S>
 				where
-					%s
+					S: Service<Request = F%sRequest, Response = F%sResponse, Error = thrift::Error>,
 				{
-					%s
-					service: S%v,
+					service: S,
 				}
 
-				impl<T> F%sClient<%sF%sClientService<T>>
-				where
-					T: FTransport,
-				{
-					pub fn new(provider: FServiceProvider<T>) -> F%sClient<%sF%sClientService<T>> {
-						F%sClient {
-							%s
-							service: F%sClientService {
-								transport: provider.transport,
-								input_protocol_factory: provider.input_protocol_factory,
-								output_protocol_factory: provider.output_protocol_factory,
-							}
+				pub struct F%sClientBuilder<M> {
+					middleware: M,
+				}
+
+				impl F%sClientBuilder<middleware::Identity> {
+					pub fn new() -> Self{
+						F%sClientBuilder {
+							middleware: middleware::Identity::new(),
 						}
 					}
 				}
+
+				impl<M> F%sClientBuilder<M> {
+				    pub fn middleware<U>(self, middleware: U) -> F%sClientBuilder<<M as Chain<U>>::Output>
+				    where
+				        M: Chain<U>,
+				    {
+				        F%sClientBuilder {
+				            middleware: self.middleware.chain(middleware),
+				        }
+				    }
+				
+				    pub fn build<T>(self, provider: FServiceProvider<T>) -> F%sClient<M::Service>
+				    where
+				        T: FTransport,
+				        M: Middleware<
+				            F%sClientService<T>,
+				            Request = F%sRequest,
+				            Response = F%sResponse,
+				            Error = thrift::Error,
+				        >,
+				    {
+				        F%sClient {
+				            service: self.middleware.wrap(F%sClientService {
+				                transport: provider.transport,
+				                input_protocol_factory: provider.input_protocol_factory,
+				                output_protocol_factory: provider.output_protocol_factory,
+				            }),
+				        }
+				    }
+				}
 				`,
-		sName, strings.Join(paramNames, ","), svcBounds, extendServiceField, len(paramNames)-1,
-		sName, extendsClientService, sName, sName, extendsClientService, sName, sName, extendServiceFieldInst, sName))
-	if svc := s.ExtendsServiceStruct(); svc != nil {
-		buffer.WriteString(g.implServiceForClient(sName, extendsModName, svc, paramNames, svcBounds))
-	}
-	buffer.WriteString(g.implServiceForClient(sName, "", s, paramNames, svcBounds))
+		sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName))
+	buffer.WriteString(g.implServiceForClient(sName, "", s, len(serviceMethods)))
 	buffer.WriteString(fmt.Sprintf(`
 
 			pub struct F%sClientService<T>

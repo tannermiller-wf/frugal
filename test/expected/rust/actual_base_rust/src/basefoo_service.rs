@@ -135,31 +135,58 @@ pub enum FBaseFooResponse {
     BasePing(FBaseFooBasePingResult),
 }
 
-pub struct FBaseFooClient<S0>
+pub struct FBaseFooClient<S>
 where
-    S0: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
-    service: S0,
+    service: S,
 }
 
-impl<T> FBaseFooClient<FBaseFooClientService<T>>
-where
-    T: FTransport,
-{
-    pub fn new(provider: FServiceProvider<T>) -> FBaseFooClient<FBaseFooClientService<T>> {
-        FBaseFooClient {
-            service: FBaseFooClientService {
-                transport: provider.transport,
-                input_protocol_factory: provider.input_protocol_factory,
-                output_protocol_factory: provider.output_protocol_factory,
-            },
+pub struct FBaseFooClientBuilder<M> {
+    middleware: M,
+}
+
+impl FBaseFooClientBuilder<middleware::Identity> {
+    pub fn new() -> Self {
+        FBaseFooClientBuilder {
+            middleware: middleware::Identity::new(),
         }
     }
 }
 
-impl<S0> FBaseFoo for FBaseFooClient<S0>
+impl<M> FBaseFooClientBuilder<M> {
+    pub fn middleware<U>(self, middleware: U) -> FBaseFooClientBuilder<<M as Chain<U>>::Output>
+    where
+        M: Chain<U>,
+    {
+        FBaseFooClientBuilder {
+            middleware: self.middleware.chain(middleware),
+        }
+    }
+
+    pub fn build<T>(self, provider: FServiceProvider<T>) -> FBaseFooClient<M::Service>
+    where
+        T: FTransport,
+        M: Middleware<
+            FBaseFooClientService<T>,
+            Request = FBaseFooRequest,
+            Response = FBaseFooResponse,
+            Error = thrift::Error,
+        >,
+    {
+        FBaseFooClient {
+            service: self.middleware.wrap(FBaseFooClientService {
+                transport: provider.transport,
+                input_protocol_factory: provider.input_protocol_factory,
+                output_protocol_factory: provider.output_protocol_factory,
+            }),
+        }
+    }
+}
+
+impl<S> FBaseFoo for FBaseFooClient<S>
 where
-    S0: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
 {
     fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
         let args = FBaseFooBasePingArgs {};
