@@ -29,6 +29,8 @@ import (
 )
 
 // TODO: json serialization is a thing here, look at bringing in serde
+// TODO: implement a rust version of this that copies the IDL AST and converts it to syn rust AST
+//       to get the source printing for free.
 
 const (
 	lang             = "rs"
@@ -1321,6 +1323,8 @@ func (g *Generator) makeExtendsMethodNames(s *parser.Service, sm *serviceMethod)
 		if sm.includeName != "" {
 			if namespace := g.Frugal.NamespaceForInclude(sm.includeName, lang); namespace != nil {
 				modName = namespace.Value
+			} else {
+				modName = sm.includeName
 			}
 			modName = fmt.Sprintf("%s::%s_service::", includeNameToReference(modName), strings.ToLower(sm.service.Name))
 		}
@@ -1506,19 +1510,20 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			`, sName))
 	for _, sm := range serviceMethods {
 		localSName, variantName, mName, modName := g.makeExtendsMethodNames(s, &sm)
-		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => {
-				oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(%q, thrift::protocol::TMessageType::Call, 0))?;
-				let args = %sF%s%sArgs {
-					`, sName, variantName, sm.method.Name, modName, localSName, mName))
+		argStrings := make([]string, 0, len(sm.method.Arguments))
 		for _, arg := range sm.method.Arguments {
 			aName := methodName(arg.Name)
-			buffer.WriteString(fmt.Sprintf("%s: args.%s,\n", aName, aName))
+			argStrings = append(argStrings, fmt.Sprintf("%s: args.%s", aName, aName))
 		}
+		buffer.WriteString(fmt.Sprintf(`F%sMethod::%s(args) => {
+				oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(%q, thrift::protocol::TMessageType::Call, 0))?;
+				let args = %sF%s%sArgs { %s };`,
+			sName, variantName, sm.method.Name, modName, localSName, mName, commaSpaceJoin(argStrings)))
 		sigName := ""
 		if s.Name != sm.service.Name {
 			sigName = typeName(sm.service.Name)
 		}
-		buffer.WriteString(fmt.Sprintf(`};
+		buffer.WriteString(fmt.Sprintf(`
 				args.write(&mut oproxy)?;
 				ResultSignifier::%s%s
 			}
@@ -1680,9 +1685,11 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 	
 	    fn call(&mut self, req: F%sRequest) -> FutureResult<F%sResponse, thrift::Error> {
 	        let result = match req.method {
-				`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName,
+`, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName,
 		sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName, sName,
 		sName, sName, sName))
+	// TODO: For some reason rustfmt does not appreciate this body, so I'm just shoving every line to
+	//       the left margin to make it easy
 	for _, sm := range serviceMethods {
 		localSName, variantName, mName, modName := g.makeExtendsMethodNames(s, &sm)
 		argSlice := make([]string, 0, len(sm.method.Arguments))
@@ -1690,20 +1697,23 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 			argSlice = append(argSlice, fmt.Sprintf("args.%s", methodName(arg.Name)))
 		}
 		args := commaSpaceJoin(argSlice)
+		if args != "" {
+			args = fmt.Sprintf(", %s", args)
+		}
 		buffer.WriteString(fmt.Sprintf("F%sMethod::%s(args) => ", sName, variantName))
 		if len(sm.method.Exceptions) == 0 {
 			buffer.WriteString(fmt.Sprintf(`self
-			.0
-			.%s(&req.ctx,%s)
-			.map(|res| F%sResponse::%s(%sF%s%sResult {`,
+.0
+.%s(&req.ctx%s)
+.map(|res| F%sResponse::%s(%sF%s%sResult {`,
 				methodName(sm.method.Name), args, sName, variantName, modName, localSName, mName))
 			if sm.method.ReturnType != nil {
 				buffer.WriteString("success: Some(res),\n")
 			}
 			buffer.WriteString("})),\n")
 		} else {
-			buffer.WriteString(fmt.Sprintf(`match self.0.%s(&req.ctx,%s) {
-				Ok(res) => Ok(F%sResponse::%s(%sF%s%sResult {`,
+			buffer.WriteString(fmt.Sprintf(`match self.0.%s(&req.ctx%s) {
+Ok(res) => Ok(F%sResponse::%s(%sF%s%sResult {`,
 				methodName(sm.method.Name), args, sName, variantName, modName, localSName, mName))
 			if sm.method.ReturnType != nil {
 				buffer.WriteString("success: Some(res),\n")
@@ -1712,14 +1722,14 @@ func (g *Generator) GenerateService(file *os.File, s *parser.Service) error {
 				buffer.WriteString(fmt.Sprintf("%s: None,\n", methodName(exc.Name)))
 			}
 			buffer.WriteString(fmt.Sprintf(`})),
-				Err(err) => match err {
-					thrift::Error::User(user_err) =>
-						%s
-						.map_err(|err| thrift::Error::User(err)),
-				_ => Err(err)
-			},
-		},
-		`, g.processorUserErrorHandling(s, &sm)))
+Err(err) => match err {
+thrift::Error::User(user_err) =>
+%s
+.map_err(|err| thrift::Error::User(err)),
+_ => Err(err)
+},
+},
+`, g.processorUserErrorHandling(s, &sm)))
 		}
 	}
 	buffer.WriteString(fmt.Sprintf(`};

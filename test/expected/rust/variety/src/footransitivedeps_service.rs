@@ -107,7 +107,9 @@ impl FFooTransitiveDepsPingResult {
 
 pub enum FFooTransitiveDepsMethod {
     Ping(FFooTransitiveDepsPingArgs),
-    IntermediateFooIntermeidateFoo(::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs),
+    IntermediateFooIntermeidateFoo(
+        intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs,
+    ),
 }
 
 impl FFooTransitiveDepsMethod {
@@ -143,83 +145,69 @@ impl frugal::service::Request for FFooTransitiveDepsRequest {
 pub enum FFooTransitiveDepsResponse {
     Ping(FFooTransitiveDepsPingResult),
     IntermediateFooIntermeidateFoo(
-        ::intermediatefoo_service::FIntermediateFooIntermeidateFooResult,
+        intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooResult,
     ),
 }
 
-pub struct FFooTransitiveDepsClient<S0, S1>
+pub struct FFooTransitiveDepsClient<S>
 where
-    S0: Service<
-        Request = intermediate_include::intermediatefoo_service::FIntermediateFooRequest,
-        Response = intermediate_include::intermediatefoo_service::FIntermediateFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<
+    S: Service<
         Request = FFooTransitiveDepsRequest,
         Response = FFooTransitiveDepsResponse,
         Error = thrift::Error,
     >,
 {
-    intermediate_foo_client:
-        intermediate_include::intermediatefoo_service::FIntermediateFooClient<S0>,
-    service: S1,
+    service: S,
 }
 
-impl<T>
-    FFooTransitiveDepsClient<
-        intermediate_include::intermediatefoo_service::FIntermediateFooClientService<T>,
-        FFooTransitiveDepsClientService<T>,
-    >
-where
-    T: FTransport,
-{
-    pub fn new(
-        provider: FServiceProvider<T>,
-    ) -> FFooTransitiveDepsClient<
-        intermediate_include::intermediatefoo_service::FIntermediateFooClientService<T>,
-        FFooTransitiveDepsClientService<T>,
-    > {
-        FFooTransitiveDepsClient {
-            intermediate_foo_client:
-                intermediate_include::intermediatefoo_service::FIntermediateFooClient::new(
-                    provider.clone(),
-                ),
-            service: FFooTransitiveDepsClientService {
-                transport: provider.transport,
-                input_protocol_factory: provider.input_protocol_factory,
-                output_protocol_factory: provider.output_protocol_factory,
-            },
+pub struct FFooTransitiveDepsClientBuilder<M> {
+    middleware: M,
+}
+
+impl FFooTransitiveDepsClientBuilder<middleware::Identity> {
+    pub fn new() -> Self {
+        FFooTransitiveDepsClientBuilder {
+            middleware: middleware::Identity::new(),
         }
     }
 }
 
-impl<S0, S1> intermediate_include::intermediatefoo_service::FIntermediateFoo
-    for FFooTransitiveDepsClient<S0, S1>
-where
-    S0: Service<
-        Request = intermediate_include::intermediatefoo_service::FIntermediateFooRequest,
-        Response = intermediate_include::intermediatefoo_service::FIntermediateFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<
-        Request = FFooTransitiveDepsRequest,
-        Response = FFooTransitiveDepsResponse,
-        Error = thrift::Error,
-    >,
-{
-    fn intermeidate_foo(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        self.intermediate_foo_client.intermeidate_foo(ctx)
+impl<M> FFooTransitiveDepsClientBuilder<M> {
+    pub fn middleware<U>(
+        self,
+        middleware: U,
+    ) -> FFooTransitiveDepsClientBuilder<<M as Chain<U>>::Output>
+    where
+        M: Chain<U>,
+    {
+        FFooTransitiveDepsClientBuilder {
+            middleware: self.middleware.chain(middleware),
+        }
+    }
+
+    pub fn build<T>(self, provider: FServiceProvider<T>) -> FFooTransitiveDepsClient<M::Service>
+    where
+        T: FTransport,
+        M: Middleware<
+            FFooTransitiveDepsClientService<T>,
+            Request = FFooTransitiveDepsRequest,
+            Response = FFooTransitiveDepsResponse,
+            Error = thrift::Error,
+        >,
+    {
+        FFooTransitiveDepsClient {
+            service: self.middleware.wrap(FFooTransitiveDepsClientService {
+                transport: provider.transport,
+                input_protocol_factory: provider.input_protocol_factory,
+                output_protocol_factory: provider.output_protocol_factory,
+            }),
+        }
     }
 }
 
-impl<S0, S1> FFooTransitiveDeps for FFooTransitiveDepsClient<S0, S1>
+impl<S> FFooTransitiveDeps for FFooTransitiveDepsClient<S>
 where
-    S0: Service<
-        Request = intermediate_include::intermediatefoo_service::FIntermediateFooRequest,
-        Response = intermediate_include::intermediatefoo_service::FIntermediateFooResponse,
-        Error = thrift::Error,
-    >,
-    S1: Service<
+    S: Service<
         Request = FFooTransitiveDepsRequest,
         Response = FFooTransitiveDepsResponse,
         Error = thrift::Error,
@@ -231,6 +219,32 @@ where
             FFooTransitiveDepsRequest::new(ctx.clone(), FFooTransitiveDepsMethod::Ping(args));
         match self.service.call(request).wait()? {
             FFooTransitiveDepsResponse::Ping(result) => Ok(()),
+            _ => panic!("FFooTransitiveDepsClient::ping() received an incorrect response"),
+        }
+    }
+}
+
+impl<S> intermediate_include::intermediatefoo_service::FIntermediateFoo
+    for FFooTransitiveDepsClient<S>
+where
+    S: Service<
+        Request = FFooTransitiveDepsRequest,
+        Response = FFooTransitiveDepsResponse,
+        Error = thrift::Error,
+    >,
+{
+    fn intermeidate_foo(&mut self, ctx: &FContext) -> thrift::Result<()> {
+        let args =
+            intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs {};
+        let request = FFooTransitiveDepsRequest::new(
+            ctx.clone(),
+            FFooTransitiveDepsMethod::IntermediateFooIntermeidateFoo(args),
+        );
+        match self.service.call(request).wait()? {
+            FFooTransitiveDepsResponse::IntermediateFooIntermeidateFoo(result) => Ok(()),
+            _ => panic!(
+                "FFooTransitiveDepsClient::intermeidate_foo() received an incorrect response"
+            ),
         }
     }
 }
@@ -280,7 +294,7 @@ where
                         thrift::protocol::TMessageType::Call,
                         0,
                     ))?;
-                    let args = ::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs {};
+                    let args = intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs {  };
                     args.write(&mut oproxy)?;
                     ResultSignifier::IntermediateFooIntermeidateFoo
                 }
@@ -326,7 +340,7 @@ where
                         Ok(FFooTransitiveDepsResponse::Ping(result))
                     }
                     ResultSignifier::IntermediateFooIntermeidateFoo => {
-                        let mut result = ::intermediatefoo_service::FIntermediateFooIntermeidateFooResult::default();
+                        let mut result = intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooResult::default();
                         result.read(&mut iproxy)?;
                         iproxy.read_message_end()?;
                         Ok(FFooTransitiveDepsResponse::IntermediateFooIntermeidateFoo(
@@ -448,18 +462,15 @@ where
         req: FFooTransitiveDepsRequest,
     ) -> FutureResult<FFooTransitiveDepsResponse, thrift::Error> {
         let result = match req.method {
-            FFooTransitiveDepsMethod::Ping(args) => self
-                .0
-                .ping(&req.ctx)
-                .map(|res| FFooTransitiveDepsResponse::Ping(FFooTransitiveDepsPingResult {})),
-            FFooTransitiveDepsMethod::IntermediateFooIntermeidateFoo(args) => {
-                self.0.intermeidate_foo(&req.ctx).map(|res| {
-                    FFooTransitiveDepsResponse::IntermediateFooIntermeidateFoo(
-                        ::intermediatefoo_service::FIntermediateFooIntermeidateFooResult {},
-                    )
-                })
-            }
-        };
+FFooTransitiveDepsMethod::Ping(args) => self
+.0
+.ping(&req.ctx)
+.map(|res| FFooTransitiveDepsResponse::Ping(FFooTransitiveDepsPingResult {})),
+FFooTransitiveDepsMethod::IntermediateFooIntermeidateFoo(args) => self
+.0
+.intermeidate_foo(&req.ctx)
+.map(|res| FFooTransitiveDepsResponse::IntermediateFooIntermeidateFoo(intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooResult {})),
+};
         future::result(result)
     }
 }
@@ -609,7 +620,7 @@ where
         R: thrift::transport::TReadTransport,
         W: thrift::transport::TWriteTransport,
     {
-        let mut args = ::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs::default();
+        let mut args = intermediate_include::intermediatefoo_service::FIntermediateFooIntermeidateFooArgs::default();
         let mut iproxy = iprot.t_protocol_proxy();
         args.read(&mut iproxy)?;
         iproxy.read_message_end()?;
