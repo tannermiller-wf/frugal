@@ -18,7 +18,6 @@ use super::*;
 use processor::FProcessor;
 use protocol::{FInputProtocolFactory, FOutputProtocolFactory};
 
-// TODO: could this be an RC and RefCell?
 struct MutexWriteTransport(Arc<Mutex<Vec<u8>>>);
 
 impl io::Write for MutexWriteTransport {
@@ -213,7 +212,8 @@ mod test {
                     v.append(&mut chunk.to_vec())
                 }
                 String::from_utf8(v).map_err(|err| hyper::Error::Utf8(err.utf8_error()))
-            }).wait()
+            })
+            .wait()
             .unwrap()
     }
 
@@ -368,7 +368,8 @@ mod test {
         cursor.set_position(4);
         let mut iprot = FInputProtocolFactory::new(Box::new(
             thrift::protocol::TCompactInputProtocolFactory::new(),
-        )).get_protocol(Box::new(cursor));
+        ))
+        .get_protocol(Box::new(cursor));
         let mut out_ctx = FContext::new(None);
         iprot.read_response_header(&mut out_ctx).unwrap();
         assert_eq!("bar", out_ctx.response_header("foo").unwrap());

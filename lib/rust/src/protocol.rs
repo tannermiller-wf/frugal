@@ -147,10 +147,10 @@ where
                 "frugal: request missing op id",
             )
         })?;
-        ctx.add_response_header(context::OP_ID_HEADER, op_id.as_ref());
+        ctx.add_response_header(context::OP_ID_HEADER, op_id);
 
         if let Some(cid) = headers.get(context::CID_HEADER) {
-            ctx.add_response_header(context::CID_HEADER, cid.as_ref());
+            ctx.add_response_header(context::CID_HEADER, cid);
         }
 
         Ok(ctx)
