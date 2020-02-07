@@ -8,13 +8,14 @@ edition = "2018"
 base64 = "0.11"
 byteorder = "1.2"
 crossbeam = "0.7"
-#futures = "0.1"
-hyper = "0.12"
+futures-core = "0.3"
 lazy_static = "1.4"
+tide = "0.6"
 log = "0.4"
 mime = "0.3"
 nats = "0.3"
 rand = "0.7"
+http = "0.1"
 thrift = { path = "./thrift" }
-#tokio-core = "0.1"
+tokio = { version = "0.2", features = ["full"] }
 uuid = { version = "0.8", features = ["v4"] }

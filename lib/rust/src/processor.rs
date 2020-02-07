@@ -3,9 +3,9 @@ use thrift::transport::{TReadTransport, TWriteTransport};
 
 use crate::protocol::{FInputProtocol, FOutputProtocol};
 
-pub trait FProcessor: Clone + Send + 'static {
+pub trait FProcessor: Clone + Send + Sync + 'static {
     fn process<R, W>(
-        &mut self,
+        &self,
         iprot: &mut FInputProtocol<R>,
         oprot: &mut FOutputProtocol<W>,
     ) -> thrift::Result<()>

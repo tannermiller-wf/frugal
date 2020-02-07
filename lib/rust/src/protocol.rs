@@ -369,6 +369,10 @@ where
             protocol: self.factory.create(&mut self.transport),
         }
     }
+
+    pub fn into_transport(self) -> W {
+        self.transport
+    }
 }
 
 pub struct FOutputProtocolProxy<W>
