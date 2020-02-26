@@ -3,6 +3,7 @@ use thrift::transport::{TReadTransport, TWriteTransport};
 
 use crate::protocol::{FInputProtocol, FOutputProtocol};
 
+// TODO: This will probably be a async trait as well
 pub trait FProcessor: Clone + Send + Sync + 'static {
     fn process<R, W>(
         &self,

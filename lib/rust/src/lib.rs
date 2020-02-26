@@ -1,10 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate crossbeam;
-#[macro_use]
-extern crate log;
-
 pub mod buffer;
 pub mod context;
 pub mod errors;

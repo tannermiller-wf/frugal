@@ -1,36 +1,30 @@
-/*use std::io::Cursor;
+use std::io::Cursor;
 use std::str::from_utf8 as str_from_utf8;
 
+use async_trait::async_trait;
 use base64;
-use futures::future::{Either, Future};
-use futures::stream::Stream;
-use hyper::client::{Client, HttpConnector};
-use hyper::header::{qitem, Accept, ContentLength, ContentType, Headers};
-use hyper::server::Request;
-use hyper::{Body, Method, StatusCode, Uri};
-use thrift;
+use bytes::Bytes;
+use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, CONTENT_LENGTH, CONTENT_TYPE};
+use reqwest::{Client, StatusCode, Url};
 use thrift::transport::{TBufferedReadTransportFactory, TReadTransport, TReadTransportFactory};
-use tokio_core::reactor::{Core, Timeout};
 
-use super::*;
-use context::FContext;
-use transport::FTransport;
-use util::read_size;
+use super::{BASE64_ENCODING, CONTENT_TRANSFER_ENCODING, FRUGAL_CONTENT_TYPE, PAYLOAD_LIMIT};
+use crate::context::FContext;
+use crate::transport::FTransport;
+use crate::util::read_size;
 
 pub struct FHttpTransportBuilder {
-    core: Core,
-    client: Client<HttpConnector, Body>,
-    url: Uri,
+    client: Client,
+    url: Url,
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
-    request_headers: Option<Headers>,
-    get_request_headers: Option<Box<dyn Fn(&FContext) -> Headers>>,
+    request_headers: Option<HeaderMap>,
+    get_request_headers: Option<fn(&FContext) -> HeaderMap>,
 }
 
 impl FHttpTransportBuilder {
-    pub fn new(client: Client<HttpConnector, Body>, core: Core, url: Uri) -> Self {
+    pub fn new(client: Client, url: Url) -> Self {
         FHttpTransportBuilder {
-            core,
             client,
             url,
             request_size_limit: None,
@@ -50,14 +44,14 @@ impl FHttpTransportBuilder {
         self
     }
 
-    pub fn with_request_headers(mut self, request_headers: Headers) -> Self {
+    pub fn with_request_headers(mut self, request_headers: HeaderMap) -> Self {
         self.request_headers = Some(request_headers);
         self
     }
 
     pub fn with_request_headers_from_fcontext(
         mut self,
-        get_request_headers: Box<dyn Fn(&FContext) -> Headers>,
+        get_request_headers: fn(&FContext) -> HeaderMap,
     ) -> Self {
         self.get_request_headers = Some(get_request_headers);
         self
@@ -65,7 +59,6 @@ impl FHttpTransportBuilder {
 
     pub fn build(self) -> FHttpTransport {
         FHttpTransport {
-            core: self.core,
             client: self.client,
             url: self.url,
             request_size_limit: self.request_size_limit,
@@ -76,171 +69,126 @@ impl FHttpTransportBuilder {
     }
 }
 
+#[derive(Clone)]
 pub struct FHttpTransport {
-    core: Core,
-    client: Client<HttpConnector, Body>,
-    url: Uri,
+    client: Client,
+    url: Url,
     request_size_limit: Option<usize>,
     response_size_limit: Option<usize>,
-    request_headers: Option<Headers>,
-    get_request_headers: Option<Box<dyn Fn(&FContext) -> Headers>>,
+    request_headers: Option<HeaderMap>,
+    get_request_headers: Option<fn(&FContext) -> HeaderMap>,
 }
 
+#[async_trait]
 impl FTransport for FHttpTransport {
-    fn oneway(&mut self, ctx: &FContext, payload: &[u8]) -> Option<thrift::Result<()>> {
-        self.request(ctx, payload).map(|x| x.map(|_| ()))
+    type Response = Box<dyn TReadTransport + Send>;
+
+    async fn oneway(&self, ctx: &FContext, payload: &[u8]) -> thrift::Result<()> {
+        self.request(ctx, payload).await.map(|_| ())
     }
 
-    fn request(
-        &mut self,
-        ctx: &FContext,
-        payload: &[u8],
-    ) -> Option<thrift::Result<Box<dyn TReadTransport>>> {
+    async fn request(&self, ctx: &FContext, payload: &[u8]) -> thrift::Result<Self::Response> {
         // TODO: isOpen check goes here if needed
 
         if payload.len() == 4 {
-            return None;
-        }
+            return Ok(Box::new(Cursor::new(Bytes::new()))); // TODO: WTF should I return here?
+        };
 
         if let Some(size) = self.request_size_limit {
             if payload.len() > size {
-                return Some(Err(thrift::new_transport_error(
+                return Err(thrift::new_transport_error(
                     thrift::TransportErrorKind::SizeLimit,
                     format!(
                         "Message exceeds {} bytes, was {} bytes",
                         size,
                         payload.len()
                     ),
-                )));
+                ));
             }
-        }
+        };
+
         // Encode request payload
         let mut encoded = Vec::new();
         encoded.append(&mut base64::encode(payload).into_bytes());
 
-        // Initialize request
-        let mut request: Request<Body> = Request::new(Method::Post, self.url.clone());
-        request
-            .headers_mut()
-            .set(ContentLength(encoded.len() as u64));
-        request.set_body(encoded);
-
-        // add user supplied headers first, to avoid monkeying
-        // with the size limits headers below.
-        // add dynamic headers from fcontext first
+        // set headers
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_LENGTH, encoded.len().into());
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(FRUGAL_CONTENT_TYPE));
+        headers.insert(ACCEPT, HeaderValue::from_static(FRUGAL_CONTENT_TYPE));
+        headers.insert(
+            CONTENT_TRANSFER_ENCODING,
+            HeaderValue::from_static(BASE64_ENCODING),
+        );
         if let Some(ref get_request_headers) = self.get_request_headers {
-            request
-                .headers_mut()
-                .extend(get_request_headers(ctx).iter())
-        }
-
-        // now add manually passed in request headers
-        if let Some(ref headers) = self.request_headers {
-            request.headers_mut().extend(headers.iter());
-        }
-
-        // Add request headers
-        request
-            .headers_mut()
-            .set(ContentType(FRUGAL_CONTENT_TYPE.clone()));
-        request
-            .headers_mut()
-            .set(Accept(vec![qitem(FRUGAL_CONTENT_TYPE.clone())]));
-        request
-            .headers_mut()
-            .set(ContentTransferEncodingHeader(BASE64_ENCODING.to_string()));
+            headers.extend(get_request_headers(ctx));
+        };
         if let Some(size) = self.response_size_limit {
-            request.headers_mut().set(PayloadLimit(size as i64));
+            headers.insert(PAYLOAD_LIMIT, size.into());
         }
 
-        let timeout = match Timeout::new(ctx.timeout(), &self.core.handle()) {
-            Ok(to) => to,
+        let result = self
+            .client
+            .post(self.url.clone())
+            .headers(headers)
+            .timeout(ctx.timeout())
+            .body(encoded)
+            .send()
+            .await;
+
+        let response = match result {
+            Ok(response) => response,
             Err(err) => {
-                return Some(Err(thrift::new_transport_error(
-                    thrift::TransportErrorKind::Unknown,
-                    format!("setting timeout error: {}", &err),
-                )))
+                if err.is_timeout() {
+                    return Err(thrift::new_transport_error(
+                        thrift::TransportErrorKind::TimedOut,
+                        "timed out",
+                    ));
+                } else {
+                    return Err(thrift::Error::User(Box::new(err)));
+                };
             }
         };
 
-        // Make the HTTP request
-        let initial_request = self
-            .client
-            .request(request)
-            .map_err(|err| thrift::Error::User(Box::new(err)))
-            .and_then(|response| {
-                if let StatusCode::PayloadTooLarge = response.status() {
-                    return Err(thrift::new_transport_error(
-                        thrift::TransportErrorKind::SizeLimit,
-                        "response was too large for the transport",
-                    ));
-                }
-
-                Ok(response)
-            });
-
-        // Handle timeout
-        let op = initial_request
-            .select2(timeout)
-            .then(|res| match res {
-                // TODO: Can this be simplified with Either::split?
-                Ok(Either::A((resp, _))) => Ok(resp),
-                Ok(Either::B((_, _to))) => Err(thrift::new_transport_error(
-                    thrift::TransportErrorKind::TimedOut,
-                    "timed out",
-                )),
-                Err(Either::A((resp_err, _))) => Err(resp_err),
-                Err(Either::B((_, _to_err))) => Err(thrift::new_transport_error(
-                    thrift::TransportErrorKind::TimedOut,
-                    "time out error",
-                )),
-            }).and_then(|resp| {
-                let status_code = resp.status().as_u16();
-
-                resp.body()
-                    .collect()
-                    .map_err(|err| thrift::Error::User(Box::new(err)))
-                    .and_then(move |chunks| {
-                        let mut buf = Vec::new();
-                        for chunk in chunks {
-                            buf.append(&mut chunk.to_vec());
-                        }
-
-                        {
-                            let buf_str = match str_from_utf8(&buf) {
-                                Ok(s) => s,
-                                // NOTE: thrift::Error really should implement From<Utf8Error> too
-                                Err(err) => return Err(thrift::Error::User(Box::new(err))),
-                            };
-
-                            if status_code >= 300 {
-                                return Err(thrift::new_transport_error(
-                                    thrift::TransportErrorKind::Unknown,
-                                    format!(
-                                        "response errored with code {} and message {}",
-                                        status_code, buf_str
-                                    ),
-                                ));
-                            }
-                        }
-
-                        base64::decode(&buf).map_err(|err| thrift::Error::User(Box::new(err)))
-                    })
-            });
-
-        let body = match self.core.run(op) {
-            Ok(body) => body,
-            Err(err) => return Some(Err(err)),
+        let status_code = response.status();
+        if status_code == StatusCode::PAYLOAD_TOO_LARGE {
+            return Err(thrift::new_transport_error(
+                thrift::TransportErrorKind::SizeLimit,
+                "response was too large for the transport",
+            ));
         };
 
-        let body_len = body.len();
+        let body = match response.bytes().await {
+            Ok(body) => body,
+            Err(err) => return Err(thrift::Error::User(Box::new(err))),
+        };
+
+        if status_code.as_u16() >= 300 {
+            return match str_from_utf8(&body) {
+                Ok(s) => Err(thrift::new_transport_error(
+                    thrift::TransportErrorKind::Unknown,
+                    format!(
+                        "response errored with code {} and message {}",
+                        status_code, s
+                    ),
+                )),
+                Err(err) => Err(thrift::Error::User(Box::new(err))),
+            };
+        }
+
+        let decoded_body = match base64::decode(&body) {
+            Ok(body) => body,
+            Err(err) => return Err(thrift::Error::User(Box::new(err))),
+        };
+
+        let body_len = decoded_body.len();
 
         // All responses should be framed with 4 bytes (uint32)
         if body_len < 4 {
-            return Some(Err(thrift::new_protocol_error(
+            return Err(thrift::new_protocol_error(
                 thrift::ProtocolErrorKind::InvalidData,
                 "frugal: invalid invalid frame size",
-            )));
+            ));
         }
 
         let mut body_cursor = Cursor::new(body);
@@ -249,22 +197,20 @@ impl FTransport for FHttpTransport {
         if body_len == 4 {
             if let Ok(n) = read_size(&mut body_cursor) {
                 if n != 0 {
-                    return Some(Err(thrift::new_protocol_error(
+                    return Err(thrift::new_protocol_error(
                         thrift::ProtocolErrorKind::InvalidData,
                         "frugal: missing data",
-                    )));
+                    ));
                 }
             }
             // it's a one-way, drop it
-            return None;
+            return Ok(Box::new(Cursor::new(Bytes::new())));
         }
 
-        Some(Ok(
-            TBufferedReadTransportFactory::new().create(Box::new(body_cursor))
-        ))
+        Ok(TBufferedReadTransportFactory::new().create(Box::new(body_cursor)))
     }
 
     fn get_request_size_limit(&self) -> Option<usize> {
         self.request_size_limit
     }
-}*/
+}

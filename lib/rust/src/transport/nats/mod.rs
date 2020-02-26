@@ -16,3 +16,11 @@ fn build_client(server: &str, tls_config: Option<TlsConfig>) -> thrift::Result<C
     };
     Ok(client)
 }
+
+fn map_tokio_error<E: std::error::Error>(err: E) -> thrift::Error {
+    map_tokio_error_string(err.to_string())
+}
+
+fn map_tokio_error_string(s: String) -> thrift::Error {
+    thrift::new_transport_error(thrift::TransportErrorKind::Unknown, s)
+}

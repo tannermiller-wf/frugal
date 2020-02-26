@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use lazy_static::lazy_static;
 use uuid::Uuid;
 
 // Header containing correlation id

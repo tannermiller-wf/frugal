@@ -1,12 +1,14 @@
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam::channel;
+use lazy_static::lazy_static;
+use log::{error, warn};
 use nats;
+use tokio::task;
 
-use super::{build_client, NATS_MAX_MESSAGE_SIZE};
+use super::{build_client, map_tokio_error, NATS_MAX_MESSAGE_SIZE};
 use crate::buffer::FMemoryOutputBuffer;
 use crate::processor::FProcessor;
 use crate::protocol::{FInputProtocolFactory, FOutputProtocolFactory};
@@ -89,45 +91,7 @@ where
         self
     }
 
-    pub fn build(self) -> FNatsServer<P> {
-        FNatsServer {
-            server: self.server,
-            tls_config: self.tls_config,
-            processor: self.processor,
-            iprot_factory: self.iprot_factory,
-            oprot_factory: self.oprot_factory,
-            subjects: self.subjects,
-            queue: self.queue,
-            worker_count: self.worker_count,
-            queue_len: self.queue_len,
-            high_water_mark: self.high_water_mark,
-        }
-    }
-}
-
-// TODO: Impl drop and put the unsub stuff in there. Actually, not sure if that works if serve()
-// blocks indefinitely.
-pub struct FNatsServer<P>
-where
-    P: FProcessor,
-{
-    server: String,
-    tls_config: Option<nats::TlsConfig>,
-    processor: P,
-    iprot_factory: FInputProtocolFactory,
-    oprot_factory: FOutputProtocolFactory,
-    subjects: Vec<String>,
-    queue: Option<String>,
-    worker_count: usize,
-    queue_len: usize,
-    high_water_mark: Duration,
-}
-
-impl<P> FNatsServer<P>
-where
-    P: FProcessor,
-{
-    pub fn serve(&mut self) -> thrift::Result<()> {
+    pub async fn serve(self) -> thrift::Result<()> {
         let mut sub_client = build_client(&self.server, self.tls_config.clone())?;
         let pub_client = Arc::new(Mutex::new(build_client(
             &self.server,
@@ -136,16 +100,15 @@ where
 
         let (sender, receiver) = channel::bounded(self.queue_len);
 
-        for subject in self.subjects.iter() {
-            sub_client
-                .subscribe(&subject, self.queue.as_ref().map(String::as_str))
-                .map_err(|err| {
-                    thrift::new_transport_error(
-                        thrift::TransportErrorKind::Unknown,
-                        err.to_string(),
-                    )
-                })?;
-        }
+        // blocking in place b/c we can't move the sub_client yet
+        task::block_in_place::<_, thrift::Result<()>>(|| {
+            for subject in self.subjects.iter() {
+                sub_client
+                    .subscribe(&subject, self.queue.as_ref().map(String::as_str))
+                    .map_err(map_tokio_error)?;
+            }
+            Ok(())
+        })?;
 
         for _ in 0..self.worker_count {
             let pub_client_clone = pub_client.clone();
@@ -154,44 +117,45 @@ where
             let proc_clone = self.processor.clone();
             let iprot_factory_clone = self.iprot_factory.clone();
             let oprot_factory_clone = self.oprot_factory.clone();
-            thread::spawn(move || {
-                worker(
-                    pub_client_clone,
-                    recv_clone,
-                    high_water_mark_clone,
-                    proc_clone,
-                    iprot_factory_clone,
-                    oprot_factory_clone,
-                )
-            });
+            task::spawn(worker(
+                pub_client_clone,
+                recv_clone,
+                high_water_mark_clone,
+                proc_clone,
+                iprot_factory_clone,
+                oprot_factory_clone,
+            ));
         }
 
-        for msg in sub_client.events() {
-            let reply = match msg.inbox {
-                Some(reply) => reply,
-                None => {
-                    warn!("frugal: discarding invalid NATS request (no reply)");
-                    continue;
-                }
-            };
+        // now move this to the blocking executor as there's no more async in it
+        task::spawn_blocking(move || {
+            for msg in sub_client.events() {
+                let reply = match msg.inbox {
+                    Some(reply) => reply,
+                    None => {
+                        warn!("frugal: discarding invalid NATS request (no reply)");
+                        continue;
+                    }
+                };
 
-            let send_result = sender.send(FrameWrapper {
-                frame: msg.msg,
-                timestamp: Instant::now(),
-                reply,
-            });
+                let send_result = sender.send(FrameWrapper {
+                    frame: msg.msg,
+                    timestamp: Instant::now(),
+                    reply,
+                });
 
-            if send_result.is_err() {
-                error!("frugal: work channel was disconnected, stopping subscription");
-                break;
-            };
-        }
-
-        Ok(())
+                if send_result.is_err() {
+                    error!("frugal: work channel was disconnected, stopping subscription");
+                    break;
+                };
+            }
+        })
+        .await
+        .map_err(map_tokio_error)
     }
 }
 
-fn worker<P>(
+async fn worker<P>(
     client_mu: Arc<Mutex<nats::Client>>,
     receiver: channel::Receiver<FrameWrapper>,
     high_water_mark: Duration,
@@ -202,8 +166,10 @@ fn worker<P>(
     P: FProcessor,
 {
     loop {
-        let msg = match receiver.recv() {
-            Ok(msg) => {
+        // must move the receiver to another thread, so clone it first
+        let r = receiver.clone();
+        let msg = match task::spawn_blocking(move || r.recv()).await {
+            Ok(Ok(msg)) => {
                 let dur = msg.timestamp.elapsed();
                 if dur > high_water_mark {
                     let millis = dur.as_secs() * 1000 + u64::from(dur.subsec_millis());
@@ -211,53 +177,62 @@ fn worker<P>(
                 };
                 msg
             }
-            Err(_) => {
+            _ => {
                 error!("frugal: work channel was disconnected, stopping worker");
                 break;
             }
         };
 
-        if let Err(err) = process_frame(
-            msg,
-            &client_mu,
-            &mut processor,
-            &iprot_factory,
-            &oprot_factory,
-        ) {
-            error!("frugal: error processing request: {}", err);
-            continue;
-        }
+        // TODO: process_frame will probably be async too
+        let output = match process_frame(&msg.frame, &mut processor, &iprot_factory, &oprot_factory)
+        {
+            Ok(output) => output,
+            Err(err) => {
+                error!("frugal: error processing request: {}", err);
+                continue;
+            }
+        };
+
+        let client = client_mu.clone();
+        let res = task::spawn_blocking(move || {
+            client
+                .lock()
+                .unwrap()
+                .publish(&msg.reply, output.bytes())
+                .map_err(|err| {
+                    thrift::new_transport_error(
+                        thrift::TransportErrorKind::Unknown,
+                        err.to_string(),
+                    )
+                })
+        })
+        .await;
+        match res {
+            Ok(Ok(())) => (),
+            Ok(Err(err)) => error!("frugal: error processing request: {}", err),
+            Err(err) => error!("frugal: error processing request: {}", err),
+        };
     }
 }
 
 fn process_frame<P>(
-    msg: FrameWrapper,
-    client: &Arc<Mutex<nats::Client>>,
+    frame: &[u8],
     processor: &mut P,
     iprot_factory: &FInputProtocolFactory,
     oprot_factory: &FOutputProtocolFactory,
-) -> thrift::Result<()>
+) -> thrift::Result<FMemoryOutputBuffer>
 where
     P: FProcessor,
 {
-    let input = Cursor::new(&msg.frame[4..]);
+    let input = Cursor::new(&frame[4..]);
     let mut output = FMemoryOutputBuffer::new(NATS_MAX_MESSAGE_SIZE);
     let mut iprot = iprot_factory.get_protocol(input);
 
     {
         let mut oprot = oprot_factory.get_protocol(&mut output);
+        // TODO: processor will probably be async
         processor.process(&mut iprot, &mut oprot)?;
     };
 
-    if output.bytes().is_empty() {
-        return Ok(());
-    }
-
-    client
-        .lock()
-        .unwrap()
-        .publish(&msg.reply, output.bytes())
-        .map_err(|err| {
-            thrift::new_transport_error(thrift::TransportErrorKind::Unknown, err.to_string())
-        })
+    Ok(output)
 }
