@@ -6,13 +6,13 @@ use lazy_static::lazy_static;
 use uuid::Uuid;
 
 // Header containing correlation id
-pub static CID_HEADER: &'static str = "_cid";
+pub static CID_HEADER: &str = "_cid";
 
 // Header containing op id (uint64 as string)
-pub static OP_ID_HEADER: &'static str = "_opid";
+pub static OP_ID_HEADER: &str = "_opid";
 
 // Header containing request timeout (milliseconds as string)
-pub static TIMEOUT_HEADER: &'static str = "_timeout";
+pub static TIMEOUT_HEADER: &str = "_timeout";
 
 lazy_static! {
     // Default request timeout
@@ -49,7 +49,7 @@ impl FContext {
         };
 
         let mut request = BTreeMap::new();
-        request.insert(CID_HEADER.to_string(), cid.to_string());
+        request.insert(CID_HEADER.to_string(), cid);
         request.insert(
             TIMEOUT_HEADER.to_string(),
             duration_to_ms_string(&DEFAULT_TIMEOUT),

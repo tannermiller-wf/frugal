@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::io;
 
 use byteorder::{BigEndian, ReadBytesExt};
@@ -8,8 +7,8 @@ pub fn read_exact<R: io::Read>(reader: &mut R, size: usize) -> thrift::Result<Ve
     let mut buf = vec![0; size];
     reader.read_exact(&mut buf).map_err(|err| {
         match err.kind() {
-                        io::ErrorKind::UnexpectedEof => thrift::new_transport_error(thrift::TransportErrorKind::EndOfFile, err.description()),
-                        _ => thrift::new_transport_error(thrift::TransportErrorKind::Unknown, format!("frugal: error reading protocol headers in unmarshalHeaders reading header size: {}", err.description())),
+                        io::ErrorKind::UnexpectedEof => thrift::new_transport_error(thrift::TransportErrorKind::EndOfFile, format!("{}", err)),
+                        _ => thrift::new_transport_error(thrift::TransportErrorKind::Unknown, format!("frugal: error reading protocol headers in unmarshalHeaders reading header size: {}", err)),
                     }
     })?;
     Ok(buf)

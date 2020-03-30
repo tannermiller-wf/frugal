@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::io::{self, Write};
 
 use byteorder::{BigEndian, WriteBytesExt};
@@ -53,7 +52,7 @@ impl ProtocolMarshaler {
                         String::from_utf8(bs).map_err(|err| {
                             thrift::new_protocol_error(
                                 thrift::ProtocolErrorKind::InvalidData,
-                                err.description(),
+                                format!("{}", err),
                             )
                         })
                     })?;
@@ -71,7 +70,7 @@ impl ProtocolMarshaler {
                         String::from_utf8(bs).map_err(|err| {
                             thrift::new_protocol_error(
                                 thrift::ProtocolErrorKind::InvalidData,
-                                err.description(),
+                                format!("{}", err),
                             )
                         })
                     })?;
@@ -331,7 +330,7 @@ where
                             thrift::TransportErrorKind::Unknown,
                             format!(
                                 "frugal: error writing protocol headers in writeHeader: {}",
-                                err.description()
+                                format!("{}", err),
                             ),
                         )
                     })
@@ -350,7 +349,7 @@ where
                 self.transport.flush().map_err(|err| {
                     thrift::new_transport_error(
                         thrift::TransportErrorKind::Unknown,
-                        format!("frugal: failed to flush transport: {}", err.description()),
+                        format!("frugal: failed to flush transport: {}", err),
                     )
                 })
             })

@@ -191,7 +191,7 @@ impl FTransport for FHttpTransport {
             ));
         }
 
-        let mut body_cursor = Cursor::new(body);
+        let mut body_cursor = Cursor::new(decoded_body);
 
         // If there are only 4 bytes, this needs to be a one-way (i.e. frame size 0)
         if body_len == 4 {

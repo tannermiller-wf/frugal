@@ -104,7 +104,7 @@ where
         task::block_in_place::<_, thrift::Result<()>>(|| {
             for subject in self.subjects.iter() {
                 sub_client
-                    .subscribe(&subject, self.queue.as_ref().map(String::as_str))
+                    .subscribe(&subject, self.queue.as_deref())
                     .map_err(map_tokio_error)?;
             }
             Ok(())

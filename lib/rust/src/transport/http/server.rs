@@ -2,12 +2,15 @@ use std::io::Cursor;
 
 use base64;
 use byteorder::{BigEndian, WriteBytesExt};
-use http::header::{HeaderMap, CONTENT_LENGTH, CONTENT_TYPE};
+use http::header::HeaderMap;
 use http::status::StatusCode;
 use thrift::transport::{TBufferedReadTransportFactory, TReadTransportFactory};
 use tide::{self, Request, Response, Server};
 
-use super::{BASE64_ENCODING, CONTENT_TRANSFER_ENCODING, FRUGAL_CONTENT_TYPE, PAYLOAD_LIMIT};
+use super::{
+    BASE64_ENCODING, CONTENT_LENGTH, CONTENT_TRANSFER_ENCODING, CONTENT_TYPE, FRUGAL_CONTENT_TYPE,
+    PAYLOAD_LIMIT,
+};
 use crate::processor::FProcessor;
 use crate::protocol::{FInputProtocolFactory, FOutputProtocolFactory};
 
@@ -35,7 +38,7 @@ pub fn new<P: FProcessor>(
         output_protocol_factory,
     });
     server
-        .at("/frugal")
+        .at("/frugal") // TODO: Perhaps this out to just be "/" and or make this configurable
         .post(|mut req: Request<State<P>>| async move {
             let body = match req.body_bytes().await {
                 Ok(body) => body,
@@ -48,9 +51,10 @@ pub fn new<P: FProcessor>(
             };
             match process(req.headers(), req.state(), &body) {
                 Ok(resp) => Response::new(StatusCode::OK.as_u16())
-                    .set_header(CONTENT_TYPE.as_str(), &*FRUGAL_CONTENT_TYPE)
-                    .set_header(CONTENT_LENGTH.as_str(), resp.len().to_string())
-                    .set_header(CONTENT_TRANSFER_ENCODING, &*BASE64_ENCODING),
+                    .set_header(CONTENT_TYPE.as_ref(), &*FRUGAL_CONTENT_TYPE)
+                    .set_header(CONTENT_LENGTH.as_ref(), resp.len().to_string())
+                    .set_header(CONTENT_TRANSFER_ENCODING, &*BASE64_ENCODING)
+                    .body_string(resp),
                 Err((err_msg, status)) => error_resp(err_msg, status),
             }
         });
@@ -61,10 +65,10 @@ fn process<P: FProcessor>(
     headers: &HeaderMap,
     state: &State<P>,
     body: &[u8],
-) -> Result<Vec<u8>, (String, StatusCode)> {
+) -> Result<String, (String, StatusCode)> {
     // validate we have at least enough for a frame header
     let req_len = headers
-        .get(CONTENT_LENGTH)
+        .get(&CONTENT_LENGTH)
         .and_then(|h| h.to_str().unwrap().parse::<i64>().ok())
         .unwrap_or(0);
     if req_len < 4 {
@@ -134,7 +138,7 @@ fn process<P: FProcessor>(
         .unwrap();
 
     output_buf.extend_from_slice(&out_buf);
-    Ok(base64::encode(&output_buf).into_bytes())
+    Ok(base64::encode(&output_buf))
 }
 
 #[cfg(test)]
@@ -222,7 +226,7 @@ mod test {
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
+        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
 
         let (err_msg, status) = process(&headers, &state, body.as_bytes()).unwrap_err();
 
@@ -259,7 +263,7 @@ mod test {
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
+        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
         headers.insert(PAYLOAD_LIMIT, HeaderValue::from_str("5").unwrap());
 
         let (err_msg, status) = process(&headers, &state, body.as_bytes()).unwrap_err();
@@ -298,7 +302,7 @@ mod test {
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
         let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
+        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
 
         let resp = process(&headers, &state, body.as_bytes()).unwrap();
 
