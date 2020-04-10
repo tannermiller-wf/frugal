@@ -61,7 +61,7 @@ fn new_test_address() -> net::SocketAddr {
 }
 
 #[tokio::test(threaded_scheduler)]
-async fn test_transport_service_integration() {
+async fn test_http_transport_service_integration() {
     #[derive(Clone)]
     struct MockProcessor;
     impl FProcessor for MockProcessor {
