@@ -159,7 +159,7 @@ async fn worker<P>(
     client_mu: Arc<Mutex<nats::Client>>,
     receiver: channel::Receiver<FrameWrapper>,
     high_water_mark: Duration,
-    mut processor: P,
+    processor: P,
     iprot_factory: FInputProtocolFactory,
     oprot_factory: FOutputProtocolFactory,
 ) where
@@ -183,14 +183,19 @@ async fn worker<P>(
             }
         };
 
-        // TODO: process_frame will probably be async too
-        let output = match process_frame(&msg.frame, &mut processor, &iprot_factory, &oprot_factory)
+        let input = Cursor::new(&msg.frame[4..]);
+        let mut output = FMemoryOutputBuffer::new(NATS_MAX_MESSAGE_SIZE);
+        let mut iprot = iprot_factory.get_protocol(input);
+
         {
-            Ok(output) => output,
-            Err(err) => {
-                error!("frugal: error processing request: {}", err);
-                continue;
-            }
+            let mut oprot = oprot_factory.get_protocol(&mut output);
+            match processor.process(&mut iprot, &mut oprot).await {
+                Err(err) => {
+                    error!("frugal: error processing request: {}", err);
+                    continue;
+                }
+                _ => (),
+            };
         };
 
         let client = client_mu.clone();
@@ -213,26 +218,4 @@ async fn worker<P>(
             Err(err) => error!("frugal: error processing request: {}", err),
         };
     }
-}
-
-fn process_frame<P>(
-    frame: &[u8],
-    processor: &mut P,
-    iprot_factory: &FInputProtocolFactory,
-    oprot_factory: &FOutputProtocolFactory,
-) -> thrift::Result<FMemoryOutputBuffer>
-where
-    P: FProcessor,
-{
-    let input = Cursor::new(&frame[4..]);
-    let mut output = FMemoryOutputBuffer::new(NATS_MAX_MESSAGE_SIZE);
-    let mut iprot = iprot_factory.get_protocol(input);
-
-    {
-        let mut oprot = oprot_factory.get_protocol(&mut output);
-        // TODO: processor will probably be async
-        processor.process(&mut iprot, &mut oprot)?;
-    };
-
-    Ok(output)
 }

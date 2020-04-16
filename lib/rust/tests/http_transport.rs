@@ -1,5 +1,6 @@
 use std::net;
 
+use async_trait::async_trait;
 use byteorder::{BigEndian, WriteBytesExt};
 use rand::random;
 use reqwest;
@@ -64,8 +65,9 @@ fn new_test_address() -> net::SocketAddr {
 async fn test_http_transport_service_integration() {
     #[derive(Clone)]
     struct MockProcessor;
+    #[async_trait]
     impl FProcessor for MockProcessor {
-        fn process<R: TReadTransport, W: TWriteTransport>(
+        async fn process<R: TReadTransport + Send, W: TWriteTransport + Send>(
             &self,
             _: &mut FInputProtocol<R>,
             oprot: &mut FOutputProtocol<W>,

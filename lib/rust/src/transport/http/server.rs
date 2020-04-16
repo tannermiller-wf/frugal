@@ -2,7 +2,6 @@ use std::io::Cursor;
 
 use base64;
 use byteorder::{BigEndian, WriteBytesExt};
-use http::header::HeaderMap;
 use http::status::StatusCode;
 use thrift::transport::{TBufferedReadTransportFactory, TReadTransportFactory};
 use tide::{self, Request, Response, Server};
@@ -49,7 +48,21 @@ pub fn new<P: FProcessor>(
                     );
                 }
             };
-            match process(req.headers(), req.state(), &body) {
+
+            // pull out all of the interesting fields off the request so we don't have to pass the
+            // request itself into the process async
+            let limit = req
+                .headers()
+                .get(&*PAYLOAD_LIMIT)
+                .and_then(|h| h.to_str().unwrap().parse::<i64>().ok());
+            let req_len = req
+                .headers()
+                .get(&CONTENT_LENGTH)
+                .and_then(|h| h.to_str().unwrap().parse::<i64>().ok())
+                .unwrap_or(0);
+            let state = req.state();
+
+            match process(limit, req_len, state, &body).await {
                 Ok(resp) => Response::new(StatusCode::OK.as_u16())
                     .set_header(CONTENT_TYPE.as_ref(), &*FRUGAL_CONTENT_TYPE)
                     .set_header(CONTENT_LENGTH.as_ref(), resp.len().to_string())
@@ -61,27 +74,19 @@ pub fn new<P: FProcessor>(
     server
 }
 
-fn process<P: FProcessor>(
-    headers: &HeaderMap,
+async fn process<P: FProcessor>(
+    limit: Option<i64>,
+    req_len: i64,
     state: &State<P>,
     body: &[u8],
 ) -> Result<String, (String, StatusCode)> {
     // validate we have at least enough for a frame header
-    let req_len = headers
-        .get(&CONTENT_LENGTH)
-        .and_then(|h| h.to_str().unwrap().parse::<i64>().ok())
-        .unwrap_or(0);
     if req_len < 4 {
         return Err((
             format!("Invalid request size {}", req_len),
             StatusCode::BAD_REQUEST,
         ));
     }
-
-    // pull out the payload limit header
-    let limit = headers
-        .get(&*PAYLOAD_LIMIT)
-        .and_then(|h| h.to_str().unwrap().parse::<i64>().ok());
 
     let decoded_body = match base64::decode(&body) {
         Ok(decoded) => decoded,
@@ -106,7 +111,7 @@ fn process<P: FProcessor>(
     let mut oprot = state.output_protocol_factory.get_protocol(Vec::new());
 
     // run processor
-    if let Err(err) = state.processor.process(&mut iprot, &mut oprot) {
+    if let Err(err) = state.processor.process(&mut iprot, &mut oprot).await {
         return Err((
             format!("Error processing request: {}", err),
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -146,22 +151,24 @@ mod test {
     use std::error::Error;
     use std::fmt;
 
-    use http::header::{HeaderMap, HeaderValue};
+    use async_trait::async_trait;
     use http::status::StatusCode;
     use thrift;
     use thrift::protocol::TOutputProtocol;
     use thrift::transport::{TReadTransport, TWriteTransport};
+    use tokio;
 
     use super::*;
     use crate::context::FContext;
     use crate::protocol::{FInputProtocol, FOutputProtocol};
 
-    #[test]
-    fn test_process_bad_frame_error() {
+    #[tokio::test]
+    async fn test_process_bad_frame_error() {
         #[derive(Clone)]
         struct MockProcessor;
+        #[async_trait]
         impl FProcessor for MockProcessor {
-            fn process<R: TReadTransport, W: TWriteTransport>(
+            async fn process<R: TReadTransport + Send, W: TWriteTransport + Send>(
                 &self,
                 _: &mut FInputProtocol<R>,
                 _: &mut FOutputProtocol<W>,
@@ -179,16 +186,15 @@ mod test {
             input_protocol_factory: in_prot_fac,
             output_protocol_factory: out_prot_fac,
         };
-        let headers = HeaderMap::new();
 
-        let (err_msg, status) = process(&headers, &state, &vec![]).unwrap_err();
+        let (err_msg, status) = process(None, 0, &state, &vec![]).await.unwrap_err();
 
         assert_eq!(StatusCode::BAD_REQUEST, status);
         assert_eq!("Invalid request size 0", err_msg);
     }
 
-    #[test]
-    fn test_process_processor_error() {
+    #[tokio::test]
+    async fn test_process_processor_error() {
         #[derive(Debug)]
         struct MockError;
         impl Error for MockError {
@@ -203,8 +209,9 @@ mod test {
         }
         #[derive(Clone)]
         struct MockProcessor;
+        #[async_trait]
         impl FProcessor for MockProcessor {
-            fn process<R: TReadTransport, W: TWriteTransport>(
+            async fn process<R: TReadTransport + Send, W: TWriteTransport + Send>(
                 &self,
                 _: &mut FInputProtocol<R>,
                 _: &mut FOutputProtocol<W>,
@@ -225,21 +232,20 @@ mod test {
         };
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
-        let mut headers = HeaderMap::new();
-        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
 
-        let (err_msg, status) = process(&headers, &state, body.as_bytes()).unwrap_err();
+        let (err_msg, status) = process(None, 9, &state, body.as_bytes()).await.unwrap_err();
 
         assert_eq!(StatusCode::INTERNAL_SERVER_ERROR, status);
         assert_eq!("Error processing request: processor error", err_msg,);
     }
 
-    #[test]
-    fn test_process_payload_too_large_error() {
+    #[tokio::test]
+    async fn test_process_payload_too_large_error() {
         #[derive(Clone)]
         struct MockProcessor;
+        #[async_trait]
         impl FProcessor for MockProcessor {
-            fn process<R: TReadTransport, W: TWriteTransport>(
+            async fn process<R: TReadTransport + Send, W: TWriteTransport + Send>(
                 &self,
                 _: &mut FInputProtocol<R>,
                 oprot: &mut FOutputProtocol<W>,
@@ -262,22 +268,22 @@ mod test {
         };
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
-        let mut headers = HeaderMap::new();
-        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
-        headers.insert(PAYLOAD_LIMIT, HeaderValue::from_str("5").unwrap());
 
-        let (err_msg, status) = process(&headers, &state, body.as_bytes()).unwrap_err();
+        let (err_msg, status) = process(Some(5), 9, &state, body.as_bytes())
+            .await
+            .unwrap_err();
 
         assert_eq!(StatusCode::PAYLOAD_TOO_LARGE, status);
         assert_eq!("Response size (19) larger than requested size(5)", err_msg,);
     }
 
-    #[test]
-    fn test_process_happy_path() {
+    #[tokio::test]
+    async fn test_process_happy_path() {
         #[derive(Clone)]
         struct MockProcessor;
+        #[async_trait]
         impl FProcessor for MockProcessor {
-            fn process<R: TReadTransport, W: TWriteTransport>(
+            async fn process<R: TReadTransport + Send, W: TWriteTransport + Send>(
                 &self,
                 _: &mut FInputProtocol<R>,
                 oprot: &mut FOutputProtocol<W>,
@@ -301,10 +307,8 @@ mod test {
         };
 
         let body = base64::encode(&[0u8, 1, 2, 3, 4, 5, 6, 7, 8]);
-        let mut headers = HeaderMap::new();
-        headers.insert(&CONTENT_LENGTH, HeaderValue::from_str("9").unwrap());
 
-        let resp = process(&headers, &state, body.as_bytes()).unwrap();
+        let resp = process(None, 9, &state, body.as_bytes()).await.unwrap();
 
         let mut cursor = Cursor::new(base64::decode(&resp).unwrap());
         cursor.set_position(4);
