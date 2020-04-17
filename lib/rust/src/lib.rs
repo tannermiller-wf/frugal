@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod context;
 pub mod errors;
+pub mod middleware;
 pub mod processor;
 pub mod protocol;
 pub mod provider;
