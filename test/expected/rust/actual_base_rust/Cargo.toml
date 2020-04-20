@@ -6,8 +6,6 @@ edition = "2018"
 [dependencies]
 thrift = { path = "../../../../lib/rust/thrift" }
 frugal = { path = "../../../../lib/rust" }
-lazy_static = "1.2"
+async-trait = "0.1"
+lazy_static = "1.4"
 log = "0.4"
-tower-service = "0.1"
-tower-web = "0.3"
-futures = "0.1"

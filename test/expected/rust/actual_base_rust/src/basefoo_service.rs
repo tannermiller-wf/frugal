@@ -3,20 +3,19 @@
 
 #![allow(unused_variables)]
 
-use std::collections::BTreeMap;
+use std::any::Any;
 use std::error::Error;
+use std::sync::Arc;
 
-use futures::future::{self, FutureResult};
-use futures::{Async, Future, Poll};
+use async_trait::async_trait;
+use log::error;
 use thrift;
 use thrift::protocol::{TInputProtocol, TOutputProtocol};
-use tower_service::Service;
-use tower_web::middleware::{self, Middleware};
-use tower_web::util::Chain;
 
 use frugal::buffer::FMemoryOutputBuffer;
-use frugal::context::{FContext, OP_ID_HEADER};
+use frugal::context::FContext;
 use frugal::errors;
+use frugal::middleware::{self, Middleware};
 use frugal::processor::FProcessor;
 use frugal::protocol::{
     FInputProtocol, FInputProtocolFactory, FOutputProtocol, FOutputProtocolFactory,
@@ -26,8 +25,9 @@ use frugal::transport::FTransport;
 
 use super::*;
 
+#[async_trait]
 pub trait FBaseFoo {
-    fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()>;
+    async fn base_ping(&self, ctx: &FContext) -> thrift::Result<()>;
 }
 
 #[derive(Clone, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -98,311 +98,195 @@ impl FBaseFooBasePingResult {
     }
 }
 
-pub enum FBaseFooMethod {
-    BasePing(FBaseFooBasePingArgs),
-}
+struct BasePingMethod<F: FBaseFoo + Send + Sync>(F);
 
-impl FBaseFooMethod {
-    fn name(&self) -> &'static str {
-        match *self {
-            FBaseFooMethod::BasePing(_) => "basePing",
-        }
-    }
-}
-
-pub struct FBaseFooRequest {
-    ctx: FContext,
-    method: FBaseFooMethod,
-}
-
-impl FBaseFooRequest {
-    pub fn new(ctx: FContext, method: FBaseFooMethod) -> FBaseFooRequest {
-        FBaseFooRequest { ctx, method }
-    }
-}
-
-impl frugal::service::Request for FBaseFooRequest {
-    fn context(&mut self) -> &mut FContext {
-        &mut self.ctx
-    }
-
-    fn method_name(&self) -> &'static str {
-        self.method.name()
-    }
-}
-
-pub enum FBaseFooResponse {
-    BasePing(FBaseFooBasePingResult),
-}
-
-pub struct FBaseFooClient<S>
+#[async_trait]
+impl<F> middleware::Method for BasePingMethod<F>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    F: FBaseFoo + Send + Sync,
 {
-    service: S,
-}
-
-pub struct FBaseFooClientBuilder<M> {
-    middleware: M,
-}
-
-impl FBaseFooClientBuilder<middleware::Identity> {
-    pub fn new() -> Self {
-        FBaseFooClientBuilder {
-            middleware: middleware::Identity::new(),
+    async fn run(&self, req: middleware::Request) -> middleware::Response {
+        let result = FBaseFooBasePingResult::default();
+        let handled_result = self
+            .0
+            .base_ping(&req.ctx)
+            .await
+            .map(|res| Box::new(result) as Box<dyn Any + Send>);
+        middleware::Response {
+            result: handled_result,
         }
     }
 }
 
-impl<M> FBaseFooClientBuilder<M> {
-    pub fn middleware<U>(self, middleware: U) -> FBaseFooClientBuilder<<M as Chain<U>>::Output>
-    where
-        M: Chain<U>,
-    {
-        FBaseFooClientBuilder {
-            middleware: self.middleware.chain(middleware),
-        }
-    }
+pub struct FBaseFooClient<T>
+where
+    T: FTransport + Send + Sync,
+{
+    inner: FBaseFooClientInner<T>,
+    middleware: Vec<Arc<dyn Middleware>>,
+}
 
-    pub fn build<T>(self, provider: FServiceProvider<T>) -> FBaseFooClient<M::Service>
-    where
-        T: FTransport,
-        M: Middleware<
-            FBaseFooClientService<T>,
-            Request = FBaseFooRequest,
-            Response = FBaseFooResponse,
-            Error = thrift::Error,
-        >,
-    {
+impl<T> FBaseFooClient<T>
+where
+    T: FTransport + Send + Sync,
+{
+    pub fn new(provider: FServiceProvider<T>) -> Self {
         FBaseFooClient {
-            service: self.middleware.wrap(FBaseFooClientService {
-                transport: provider.transport,
-                input_protocol_factory: provider.input_protocol_factory,
-                output_protocol_factory: provider.output_protocol_factory,
-            }),
+            inner: FBaseFooClientInner { provider },
+            middleware: Vec::new(),
         }
+    }
+
+    pub fn middleware(&mut self, middleware: impl Middleware) {
+        self.middleware.push(Arc::new(middleware));
     }
 }
 
-impl<S> FBaseFoo for FBaseFooClient<S>
+// TODO: Figure out how to run the middleware somewhere on the client side
+#[async_trait]
+impl<T> FBaseFoo for FBaseFooClient<T>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    T: FTransport + Send + Sync,
 {
-    fn base_ping(&mut self, ctx: &FContext) -> thrift::Result<()> {
-        let args = FBaseFooBasePingArgs {};
-        let request = FBaseFooRequest::new(ctx.clone(), FBaseFooMethod::BasePing(args));
-        match self.service.call(request).wait()? {
-            FBaseFooResponse::BasePing(result) => Ok(()),
-        }
-    }
-}
+    async fn base_ping(&self, ctx: &FContext) -> thrift::Result<()> {
+        let args = FBaseFooBasePingArgs::default();
 
-pub struct FBaseFooClientService<T>
-where
-    T: FTransport,
-{
-    transport: T,
-    input_protocol_factory: FInputProtocolFactory,
-    output_protocol_factory: FOutputProtocolFactory,
-}
-
-impl<T> FBaseFooClientService<T>
-where
-    T: FTransport,
-{
-    fn call_delegate(&mut self, req: FBaseFooRequest) -> Result<FBaseFooResponse, thrift::Error> {
-        enum ResultSignifier {
-            BasePing,
+        let method = BasePingMethod(self.inner.clone());
+        let middleware_next = middleware::Next {
+            method: &method,
+            next_middleware: &self.middleware,
         };
-        let FBaseFooRequest { mut ctx, method } = req;
-        let method_name = method.name();
+        let request = middleware::Request {
+            ctx: ctx.clone(),
+            args: Box::new(args),
+        };
+        middleware_next.run(request).await.result.map(|ok| {
+            let result = ok
+                .downcast::<FBaseFooBasePingResult>()
+                .expect("expected an FBaseFooBasePingResult");
+            ()
+        })
+    }
+}
+
+#[derive(Clone)]
+struct FBaseFooClientInner<T>
+where
+    T: FTransport + Send + Sync,
+{
+    provider: FServiceProvider<T>,
+}
+
+#[async_trait]
+impl<T> FBaseFoo for FBaseFooClientInner<T>
+where
+    T: FTransport + Send + Sync,
+{
+    async fn base_ping(&self, ctx: &FContext) -> thrift::Result<()> {
         let mut buffer = FMemoryOutputBuffer::new(0);
-        let signifier = {
-            let mut oprot = self.output_protocol_factory.get_protocol(&mut buffer);
-            oprot.write_request_header(&ctx)?;
+        let mut oprot = self
+            .provider
+            .output_protocol_factory
+            .get_protocol(&mut buffer);
+        {
             let mut oproxy = oprot.t_protocol_proxy();
-            let signifier = match method {
-                FBaseFooMethod::BasePing(args) => {
-                    oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
-                        "basePing",
-                        thrift::protocol::TMessageType::Call,
-                        0,
-                    ))?;
-                    let args = FBaseFooBasePingArgs {};
-                    args.write(&mut oproxy)?;
-                    ResultSignifier::BasePing
-                }
-            };
+            oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
+                "basePing",
+                thrift::protocol::TMessageType::Call,
+                0,
+            ))?;
+            let args = FBaseFooBasePingArgs {};
+            args.write(&mut oproxy)?;
             oproxy.write_message_end()?;
             oproxy.flush()?;
-            signifier
-        };
-        let mut result_transport = self.transport.request(&ctx, buffer.bytes())?;
+        }
+        let mut result_transport = match self.provider.transport.request(&ctx, buffer.bytes()).await
         {
-            let mut iprot = self
-                .input_protocol_factory
-                .get_protocol(&mut result_transport);
-            iprot.read_response_header(&mut ctx)?;
-            let mut iproxy = iprot.t_protocol_proxy();
-            let msg_id = iproxy.read_message_begin()?;
-            if msg_id.name != method_name {
-                return Err(thrift::new_application_error(
-                    thrift::ApplicationErrorKind::WrongMethodName,
-                    format!("{} failed: wrong method name", method_name),
-                ));
-            }
-            match msg_id.message_type {
-                thrift::protocol::TMessageType::Exception => {
-                    let err = thrift::Error::Application(
-                        thrift::Error::read_application_error_from_in_protocol(&mut iproxy)?,
-                    );
-                    iproxy.read_message_end()?;
-                    if frugal::errors::is_too_large_error(&err) {
-                        Err(thrift::new_transport_error(
-                            thrift::TransportErrorKind::SizeLimit,
-                            err.to_string(),
-                        ))
-                    } else {
-                        Err(err)
-                    }
+            Ok(result_transport) => result_transport,
+            Err(err) => return Err(err),
+        };
+        let mut iprot = self
+            .provider
+            .input_protocol_factory
+            .get_protocol(&mut result_transport);
+        // TODO: What context should we be using here?
+        let mut octx = ctx.clone();
+        iprot.read_response_header(&mut octx)?;
+        let mut iproxy = iprot.t_protocol_proxy();
+        let msg_id = iproxy.read_message_begin()?;
+        if msg_id.name != "basePing" {
+            return Err(thrift::new_application_error(
+                thrift::ApplicationErrorKind::WrongMethodName,
+                "basePing failed: wrong method name".to_string(),
+            ));
+        }
+        match msg_id.message_type {
+            thrift::protocol::TMessageType::Exception => {
+                let err = thrift::Error::Application(
+                    thrift::Error::read_application_error_from_in_protocol(&mut iproxy)?,
+                );
+                iproxy.read_message_end()?;
+                if errors::is_too_large_error(&err) {
+                    Err(thrift::new_transport_error(
+                        thrift::TransportErrorKind::SizeLimit,
+                        err.to_string(),
+                    ))
+                } else {
+                    Err(err)
                 }
-                thrift::protocol::TMessageType::Reply => match signifier {
-                    ResultSignifier::BasePing => {
-                        let mut result = FBaseFooBasePingResult::default();
-                        result.read(&mut iproxy)?;
-                        iproxy.read_message_end()?;
-                        Ok(FBaseFooResponse::BasePing(result))
-                    }
-                },
-                _ => Err(thrift::new_application_error(
-                    thrift::ApplicationErrorKind::InvalidMessageType,
-                    format!("{} failed: invalid message type", method_name),
-                )),
             }
+            thrift::protocol::TMessageType::Reply => {
+                //let mut result = FBaseFooBasePingResult::default();
+                //result.read(&mut iproxy)?;
+                iproxy.read_message_end()?;
+                Ok(())
+            }
+            _ => Err(thrift::new_application_error(
+                thrift::ApplicationErrorKind::InvalidMessageType,
+                "basePing failed: invalid message type".to_string(),
+            )),
         }
     }
 }
 
-impl<T> Service for FBaseFooClientService<T>
-where
-    T: FTransport,
-{
-    type Request = FBaseFooRequest;
-    type Response = FBaseFooResponse;
-    type Error = thrift::Error;
-    type Future = FutureResult<Self::Response, Self::Error>;
-
-    fn poll_ready(&mut self) -> Poll<(), thrift::Error> {
-        Ok(Async::Ready(()))
-    }
-
-    fn call(&mut self, req: Self::Request) -> Self::Future {
-        self.call_delegate(req).into()
-    }
-}
-
 #[derive(Clone)]
-pub struct FBaseFooProcessor<S>
+pub struct FBaseFooProcessor<F>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
-{
-    service: S,
-}
-
-pub struct FBaseFooProcessorBuilder<F, M>
-where
-    F: FBaseFoo,
+    F: FBaseFoo + Send + Sync,
 {
     handler: F,
-    middleware: M,
+    middleware: Vec<Arc<dyn Middleware>>,
 }
 
-impl<F> FBaseFooProcessorBuilder<F, middleware::Identity>
+impl<F> FBaseFooProcessor<F>
 where
-    F: FBaseFoo,
+    F: FBaseFoo + Send + Sync,
 {
     pub fn new(handler: F) -> Self {
-        FBaseFooProcessorBuilder {
-            handler,
-            middleware: middleware::Identity::new(),
-        }
-    }
-}
-
-impl<F, M> FBaseFooProcessorBuilder<F, M>
-where
-    F: FBaseFoo + Clone,
-{
-    pub fn middleware<U>(
-        self,
-        middleware: U,
-    ) -> FBaseFooProcessorBuilder<F, <M as Chain<U>>::Output>
-    where
-        M: Chain<U>,
-    {
-        FBaseFooProcessorBuilder {
-            handler: self.handler,
-            middleware: self.middleware.chain(middleware),
-        }
-    }
-
-    pub fn build(self) -> FBaseFooProcessor<M::Service>
-    where
-        M: Middleware<
-            FBaseFooProcessorService<F>,
-            Request = FBaseFooRequest,
-            Response = FBaseFooResponse,
-            Error = thrift::Error,
-        >,
-    {
         FBaseFooProcessor {
-            service: self.middleware.wrap(FBaseFooProcessorService(self.handler)),
+            handler,
+            middleware: Vec::new(),
         }
     }
-}
 
-#[derive(Clone)]
-pub struct FBaseFooProcessorService<F: FBaseFoo + Clone>(F);
-
-impl<F> Service for FBaseFooProcessorService<F>
-where
-    F: FBaseFoo + Clone,
-{
-    type Request = FBaseFooRequest;
-    type Response = FBaseFooResponse;
-    type Error = thrift::Error;
-    type Future = FutureResult<Self::Response, Self::Error>;
-
-    fn poll_ready(&mut self) -> Poll<(), thrift::Error> {
-        Ok(Async::Ready(()))
-    }
-
-    fn call(&mut self, req: FBaseFooRequest) -> FutureResult<FBaseFooResponse, thrift::Error> {
-        let result = match req.method {
-            FBaseFooMethod::BasePing(args) => self
-                .0
-                .base_ping(&req.ctx)
-                .map(|res| FBaseFooResponse::BasePing(FBaseFooBasePingResult {})),
-        };
-        future::result(result)
+    pub fn middleware(&mut self, m: impl Middleware) {
+        self.middleware.push(Arc::new(m));
     }
 }
 
-impl<S> FProcessor for FBaseFooProcessor<S>
+#[async_trait]
+impl<F> FProcessor for FBaseFooProcessor<F>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>
-        + Clone
-        + Send
-        + 'static,
+    F: FBaseFoo + Clone + Send + Sync + 'static,
 {
-    fn process<R, W>(
-        &mut self,
+    async fn process<R, W>(
+        &self,
         iprot: &mut FInputProtocol<R>,
         oprot: &mut FOutputProtocol<W>,
     ) -> thrift::Result<()>
     where
-        R: thrift::transport::TReadTransport,
-        W: thrift::transport::TWriteTransport,
+        R: thrift::transport::TReadTransport + Send,
+        W: thrift::transport::TWriteTransport + Send,
     {
         let ctx = iprot.read_request_header()?;
         let name = {
@@ -411,7 +295,9 @@ where
         };
 
         match &*name {
-            "basePing" => self.base_ping(&ctx, iprot, oprot),
+            "basePing" => {
+                server_base_ping(self.handler.clone(), &self.middleware, &ctx, iprot, oprot).await
+            }
             _ => {
                 error!(
                     "frugal: client invoked unknown function {} on request with correlation id {}",
@@ -441,76 +327,78 @@ where
     }
 }
 
-impl<S> FBaseFooProcessor<S>
+async fn server_base_ping<F, R, W>(
+    handler: F,
+    middleware_stack: &[Arc<dyn Middleware>],
+    ctx: &FContext,
+    iprot: &mut FInputProtocol<R>,
+    oprot: &mut FOutputProtocol<W>,
+) -> thrift::Result<()>
 where
-    S: Service<Request = FBaseFooRequest, Response = FBaseFooResponse, Error = thrift::Error>,
+    F: FBaseFoo + Send + Sync,
+    R: thrift::transport::TReadTransport,
+    W: thrift::transport::TWriteTransport,
 {
-    fn base_ping<R, W>(
-        &mut self,
-        ctx: &FContext,
-        iprot: &mut FInputProtocol<R>,
-        oprot: &mut FOutputProtocol<W>,
-    ) -> thrift::Result<()>
-    where
-        R: thrift::transport::TReadTransport,
-        W: thrift::transport::TWriteTransport,
-    {
-        let mut args = FBaseFooBasePingArgs::default();
-        let mut iproxy = iprot.t_protocol_proxy();
-        args.read(&mut iproxy)?;
-        iproxy.read_message_end()?;
-        let req = FBaseFooRequest {
-            ctx: ctx.clone(),
-            method: FBaseFooMethod::BasePing(args),
-        };
-        match self.service.call(req).wait() {
-            Err(thrift::Error::User(err)) => {
-                error!(
-                    "{} {}: {}",
-                    errors::USER_ERROR_DESCRIPTION,
-                    ctx.correlation_id(),
-                    err.description()
-                );
-                Ok(())
-            }
-            Err(err) => {
-                error!(
-                    "{} {}: {}",
-                    errors::USER_ERROR_DESCRIPTION,
-                    ctx.correlation_id(),
-                    err.description()
-                );
-                Ok(())
-            }
-            Ok(FBaseFooResponse::BasePing(result)) => oprot
-                .write_response_header(&ctx)
-                .and_then(|()| {
-                    oprot.t_protocol_proxy().write_message_begin(
-                        &thrift::protocol::TMessageIdentifier::new(
-                            "basePing",
-                            thrift::protocol::TMessageType::Reply,
-                            0,
-                        ),
-                    )
-                })
-                .and_then(|()| result.write(&mut oprot.t_protocol_proxy()))
-                .and_then(|()| oprot.t_protocol_proxy().write_message_end())
-                .and_then(|()| oprot.t_protocol_proxy().flush())
-                .or_else(|err| {
-                    if errors::is_too_large_error(&err) {
-                        errors::write_application_error(
-                            "basePing",
-                            &ctx,
-                            &thrift::ApplicationError::new(
-                                thrift::ApplicationErrorKind::Unknown,
-                                errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
-                            ),
-                            oprot,
-                        )
-                    } else {
-                        Err(err)
-                    }
-                }),
+    let args = FBaseFooBasePingArgs::default();
+
+    let method = BasePingMethod(handler);
+    let middleware_next = middleware::Next {
+        method: &method,
+        next_middleware: middleware_stack,
+    };
+    let request = middleware::Request {
+        ctx: ctx.clone(),
+        args: Box::new(args),
+    };
+    let response = middleware_next.run(request).await;
+
+    match response.result {
+        Err(thrift::Error::User(err)) => {
+            error!(
+                "{} {}: {}",
+                errors::USER_ERROR_DESCRIPTION,
+                ctx.correlation_id(),
+                err.description()
+            );
+            Ok(())
         }
+        Err(err) => {
+            error!(
+                "{} {}: {}",
+                errors::USER_ERROR_DESCRIPTION,
+                ctx.correlation_id(),
+                err.description()
+            );
+            Ok(())
+        }
+        Ok(result) => oprot
+            .write_response_header(&ctx)
+            .and_then(|()| {
+                oprot.t_protocol_proxy().write_message_begin(
+                    &thrift::protocol::TMessageIdentifier::new(
+                        "basePing",
+                        thrift::protocol::TMessageType::Reply,
+                        0,
+                    ),
+                )
+            })
+            //.and_then(|()| result.write(&mut oprot.t_protocol_proxy()))
+            .and_then(|()| oprot.t_protocol_proxy().write_message_end())
+            .and_then(|()| oprot.t_protocol_proxy().flush())
+            .or_else(|err| {
+                if errors::is_too_large_error(&err) {
+                    errors::write_application_error(
+                        "basePing",
+                        &ctx,
+                        &thrift::ApplicationError::new(
+                            thrift::ApplicationErrorKind::Unknown,
+                            errors::APPLICATION_EXCEPTION_RESPONSE_TOO_LARGE,
+                        ),
+                        oprot,
+                    )
+                } else {
+                    Err(err)
+                }
+            }),
     }
 }

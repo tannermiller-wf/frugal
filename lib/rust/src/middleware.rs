@@ -2,33 +2,43 @@ use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use thrift;
 
 use crate::context::FContext;
 
-// TODO: Maybe the args should be generic and it is the F*Args struct generated for each request?
 pub struct Request {
     pub ctx: FContext,
-    pub args: Vec<Box<dyn Any + Send>>,
+
+    /// The Arg struct for the method being called.
+    pub args: Box<dyn Any + Send>,
 }
 
-// TODO: This probably has some fields on it, Or is generic and generated F*Result struct for each
-// request
-pub struct Response;
+// TODO: this type doesn't quite feel right yet
+pub struct Response {
+    /// The Result value for the method being called.
+    pub result: thrift::Result<Box<dyn Any + Send>>,
+}
 
 #[async_trait]
-pub trait FProcessorAdapter {
+pub trait Method {
     async fn run(&self, req: Request) -> Response;
 }
 
+#[async_trait]
+pub trait Middleware: 'static + Send + Sync {
+    async fn handle<'a>(&'a self, req: Request, next: Next<'a>) -> Response;
+}
+
 pub struct Next<'a> {
-    processor: &'a (dyn FProcessorAdapter + Sync),
-    next_middleware: &'a [Arc<dyn Middleware>],
+    // TODO: Encapsulate these better
+    pub method: &'a (dyn Method + Sync),
+    pub next_middleware: &'a [Arc<dyn Middleware>],
 }
 
 impl<'a> Next<'a> {
     pub async fn run(mut self, req: Request) -> Response {
         match self.next_middleware {
-            [] => self.processor.run(req).await,
+            [] => self.method.run(req).await,
             [current, next @ ..] => {
                 self.next_middleware = next;
                 current.handle(req, self).await
@@ -37,14 +47,10 @@ impl<'a> Next<'a> {
     }
 }
 
-#[async_trait]
-pub trait Middleware: 'static + Send + Sync {
-    async fn handle<'a>(&'a self, req: Request, next: Next<'a>) -> Response;
-}
-
 #[cfg(test)]
 mod test {
     use async_trait::async_trait;
+    use thrift;
     use tokio;
 
     use super::*;
@@ -55,35 +61,33 @@ mod test {
         i: i64,
     }
 
-    fn inner_processor_fn(ctx: FContext, a: String, b: Argument) {
+    fn inner_processor_fn(ctx: FContext, a: String, b: Argument) -> thrift::Result<MyResult> {
         assert_eq!("wtf", ctx.correlation_id());
         assert_eq!("Hello, world! Bob!", &a);
         assert_eq!(8i64, b.i);
+        Ok(MyResult(42))
+    }
+
+    struct MyResult(i64);
+
+    struct MyArguments {
+        a: String,
+        b: Argument,
     }
 
     struct Adapter;
 
     #[async_trait]
-    impl FProcessorAdapter for Adapter {
-        async fn run(&self, mut req: Request) -> Response {
-            if req.args.len() != 2 {
-                panic!("expected 2 args")
-            }
+    impl Method for Adapter {
+        async fn run(&self, req: Request) -> Response {
             let ctx = req.ctx;
-            let b = req
+            let args = req
                 .args
-                .pop()
-                .unwrap()
-                .downcast::<Argument>()
-                .expect("expected an Argument for b");
-            let a = req
-                .args
-                .pop()
-                .unwrap()
-                .downcast::<String>()
-                .expect("expected a String for a");
-            inner_processor_fn(ctx, *a, *b);
-            Response
+                .downcast::<MyArguments>()
+                .expect("Expected a MyAruments");
+            let res = inner_processor_fn(ctx, args.a, args.b)
+                .map(|ok| Box::new(ok) as Box<dyn Any + Send>);
+            Response { result: res }
         }
     }
 
@@ -92,15 +96,13 @@ mod test {
     impl Middleware for MiddlewareA {
         async fn handle<'a>(&'a self, mut req: Request, next: Next<'a>) -> Response {
             // adds " Bob!" to a
-            let a = req.args[0]
-                .downcast_ref::<String>()
-                .expect("expected a string for a");
-            let new_a = format!("{} Bob!", a);
-            let new_req = Request {
-                ctx: req.ctx,
-                args: vec![Box::new(new_a), req.args.pop().unwrap()],
-            };
-            next.run(new_req).await
+            let args = req
+                .args
+                .downcast_mut::<MyArguments>()
+                .expect("Expected a MyAruments");
+            let new_a = format!("{} Bob!", args.a);
+            args.a = new_a;
+            next.run(req).await
         }
     }
 
@@ -109,10 +111,11 @@ mod test {
     impl Middleware for MiddlewareB {
         async fn handle<'a>(&'a self, mut req: Request, next: Next<'a>) -> Response {
             // adds 1 to b.i
-            let b = req.args[1]
-                .downcast_mut::<Argument>()
-                .expect("expected an Argument for b");
-            b.i += 1;
+            let args = req
+                .args
+                .downcast_mut::<MyArguments>()
+                .expect("Expected a MyAruments");
+            args.b.i += 1;
             next.run(req).await
         }
     }
@@ -126,7 +129,7 @@ mod test {
         let b = Argument { i: 7 };
         let req = Request {
             ctx: fctx,
-            args: vec![Box::new(a), Box::new(b)],
+            args: Box::new(MyArguments { a, b }),
         };
         let adapter = Adapter;
         let middleware_stack = vec![
@@ -135,10 +138,15 @@ mod test {
         ];
 
         let next = Next {
-            processor: &adapter,
+            method: &adapter,
             next_middleware: &middleware_stack,
         };
 
-        next.run(req).await;
+        let res = next.run(req).await;
+        let output_myresult = res.result.unwrap();
+        let actual_res = output_myresult
+            .downcast_ref::<MyResult>()
+            .expect("expected a MyResult");
+        assert_eq!(42i64, actual_res.0);
     }
 }

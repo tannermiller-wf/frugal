@@ -4,16 +4,6 @@
 #![allow(deprecated)]
 #![allow(unused_imports)]
 
-extern crate frugal;
-extern crate thrift;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
-extern crate futures;
-extern crate tower_service;
-extern crate tower_web;
-
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const CONST_I32_FROM_BASE: i32 = 582;
