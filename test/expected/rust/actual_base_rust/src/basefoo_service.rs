@@ -189,6 +189,7 @@ where
             .output_protocol_factory
             .get_protocol(&mut buffer);
         {
+            oprot.write_request_header(ctx)?;
             let mut oproxy = oprot.t_protocol_proxy();
             oproxy.write_message_begin(&thrift::protocol::TMessageIdentifier::new(
                 "basePing",
